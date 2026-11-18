@@ -51,6 +51,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
   late AsciicastEditorController _controller;
   bool _ownsController = false;
   int _inspectorTabIndex = 0; // 0: Clips, 1: Markers, 2: Events/History
+  String _eventFilterType = 'all'; // 'all', 'o', 'i'
   final FocusNode _shortcutFocusNode = FocusNode();
   late String _fileName;
 
@@ -171,6 +172,10 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
       }
       if (key == LogicalKeyboardKey.keyL) {
         _controller.setLooping(!_controller.isLooping);
+        return true;
+      }
+      if (key == LogicalKeyboardKey.keyM) {
+        _controller.setPauseOnMarkers(!_controller.pauseOnMarkers);
         return true;
       }
       if (key == LogicalKeyboardKey.keyR) {
@@ -403,6 +408,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
       ('Delete / Backspace', '波纹删除当前选中片段'),
       ('Ctrl/Cmd + R', '调整当前选中片段倍速'),
       ('M', '在播放头处添加标记'),
+      ('Ctrl/Cmd + M', '开启 / 跳过遇到标记自动暂停'),
       ('Ctrl/Cmd + L', '切换循环播放'),
       ('Ctrl/Cmd + Z / Ctrl+Shift+Z', '撤销 / 重做'),
       ('= / - (或 Ctrl+= / Ctrl+-)', '放大 / 缩小时间轴'),
@@ -744,6 +750,125 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
     }
   }
 
+  Future<void> _showAutoSliceDialog() async {
+    _controller.pause();
+    var mode = AutoSliceMode.byLine;
+    var onlySelectedClip = false;
+    final minGapCtrl = TextEditingController(text: '0.25');
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('自动切片时间轴素材'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  '选择切分方式：',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                SegmentedButton<AutoSliceMode>(
+                  segments: const [
+                    ButtonSegment<AutoSliceMode>(
+                      value: AutoSliceMode.byLine,
+                      icon: Icon(Icons.wrap_text, size: 16),
+                      label: Text('按行切分'),
+                    ),
+                    ButtonSegment<AutoSliceMode>(
+                      value: AutoSliceMode.byInput,
+                      icon: Icon(Icons.keyboard_alt_outlined, size: 16),
+                      label: Text('按输入切分'),
+                    ),
+                  ],
+                  selected: {mode},
+                  onSelectionChanged: (next) {
+                    setDialogState(() => mode = next.first);
+                  },
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  mode == AutoSliceMode.byLine
+                      ? '按终端输出中的换行符（\\n）自动切分，适合逐行整理演示步骤。'
+                      : '按键盘输入事件（i 事件）自动切分，适合按交互命令拆分操作片段。',
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    color: Color(0xFF94A3B8),
+                  ),
+                ),
+                if (_controller.clips.length > 1 &&
+                    _controller.selectedClipId != null) ...[
+                  const SizedBox(height: 12),
+                  SwitchListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text(
+                      '仅切分当前选中片段',
+                      style: TextStyle(fontSize: 12.5),
+                    ),
+                    value: onlySelectedClip,
+                    onChanged: (v) =>
+                        setDialogState(() => onlySelectedClip = v),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                TextField(
+                  controller: minGapCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: '最小片段间隔（秒）',
+                    hintText: '例如：0.25（避免连续快速输出产生过碎片段）',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('开始切片'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final minGap = double.tryParse(minGapCtrl.text.trim()) ?? 0.25;
+    minGapCtrl.dispose();
+
+    if (confirmed == true) {
+      final added = _controller.autoSliceClips(
+        mode: mode,
+        clipId: onlySelectedClip ? _controller.selectedClipId : null,
+        minClipDuration: minGap,
+      );
+      if (mounted) {
+        final modeName = mode == AutoSliceMode.byLine ? '按行' : '按输入';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              added > 0
+                  ? '自动切片完成（$modeName）：新增 $added 个片段'
+                  : '未找到符合条件的$modeName切分点（可尝试调小最小片段间隔）',
+            ),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Focus(
@@ -799,7 +924,12 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                 // 3. Lower Multi-Track Timeline Panel
                 SizedBox(
                   height: 185,
-                  child: AsciicastTimelinePanel(controller: _controller),
+                  child: AsciicastTimelinePanel(
+                    controller: _controller,
+                    onEditMarker: _editMarkerDialog,
+                    onEditEvent: _editRawEventDialog,
+                    onEditClipEvents: _showClipEventsEditorDialog,
+                  ),
                 ),
               ],
             ),
@@ -865,6 +995,12 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
               icon: Icons.vertical_split,
               label: '播放头切分 (Ctrl+B)',
               onTap: () => _controller.splitAtPlayhead(),
+            ),
+            const SizedBox(width: 6),
+            _buildActionBtn(
+              icon: Icons.auto_awesome_mosaic_outlined,
+              label: '自动切片',
+              onTap: _showAutoSliceDialog,
             ),
             const SizedBox(width: 6),
             _buildActionBtn(
@@ -1295,6 +1431,18 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _showClipEventsEditorDialog(clip.id),
+                    icon: const Icon(Icons.edit_note, size: 15),
+                    label: const Text(
+                      '编辑片段输出 / 按键输入内容',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -1541,10 +1689,12 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
           children: [
             TextField(
               controller: labelCtrl,
+              autofocus: true,
               decoration: const InputDecoration(
                 labelText: '标记名称',
                 border: OutlineInputBorder(),
               ),
+              onSubmitted: (_) => Navigator.pop(ctx, true),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -1618,133 +1768,324 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
             ),
           const Divider(height: 18, color: Color(0xFF262B38)),
         ],
-        Text(
-          '输出事件帧列表 (共 ${events.length} 帧，点击可跳转与修改)',
-          style: const TextStyle(
-            color: Color(0xFF94A3B8),
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '事件帧列表 (共 ${events.length} 帧)',
+                style: const TextStyle(
+                  color: Color(0xFF94A3B8),
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 6),
-        for (final ev in events.take(150))
-          InkWell(
-            onTap: () => _controller.seek(ev.timelineTime),
-            onDoubleTap: () => _editRawEventDialog(ev),
-            child: Container(
-              margin: const EdgeInsets.only(bottom: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-              decoration: BoxDecoration(
-                color: (_controller.playheadTime - ev.timelineTime).abs() < 0.08
-                    ? const Color(0xFF1E293B)
-                    : const Color(0xFF161A24),
-                borderRadius: BorderRadius.circular(4),
+        Wrap(
+          spacing: 6,
+          children: [
+            for (final opt in const [
+              ('all', '全部'),
+              ('o', '终端输出 (o)'),
+              ('i', '按键输入 (i)'),
+            ])
+              ChoiceChip(
+                label: Text(opt.$2, style: const TextStyle(fontSize: 10)),
+                selected: _eventFilterType == opt.$1,
+                onSelected: (_) => setState(() => _eventFilterType = opt.$1),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
               ),
-              child: Row(
-                children: [
-                  Text(
-                    '${ev.timelineTime.toStringAsFixed(2)}s',
-                    style: const TextStyle(
-                      color: Color(0xFF38BDF8),
-                      fontSize: 10,
-                      fontFamily: 'monospace',
+          ],
+        ),
+        const SizedBox(height: 6),
+        for (final ev in events.where(
+          (e) => _eventFilterType == 'all' || e.type == _eventFilterType,
+        ))
+          Container(
+            margin: const EdgeInsets.only(bottom: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: (_controller.playheadTime - ev.timelineTime).abs() < 0.08
+                  ? const Color(0xFF1E293B)
+                  : const Color(0xFF161A24),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () => _controller.seek(ev.timelineTime),
+                    onDoubleTap: () => _editRawEventDialog(ev),
+                    child: Row(
+                      children: [
+                        Text(
+                          '${ev.timelineTime.toStringAsFixed(2)}s',
+                          style: const TextStyle(
+                            color: Color(0xFF38BDF8),
+                            fontSize: 10,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: ev.type == 'i'
+                                ? const Color(0xFF065F46)
+                                : const Color(0xFF1E3A8A),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Text(
+                            ev.type,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            ev.data
+                                .replaceAll('\r', r'\r')
+                                .replaceAll('\n', r'\n')
+                                .replaceAll('\x1b', 'ESC'),
+                            style: const TextStyle(
+                              color: Color(0xFFCBD5E1),
+                              fontSize: 10,
+                              fontFamily: 'monospace',
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 4,
-                      vertical: 1,
-                    ),
-                    decoration: BoxDecoration(
-                      color: ev.type == 'i'
-                          ? const Color(0xFF065F46)
-                          : const Color(0xFF1E3A8A),
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                    child: Text(
-                      ev.type,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.edit_note,
+                    size: 14,
+                    color: Color(0xFF64748B),
                   ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      ev.data
-                          .replaceAll('\r', r'\r')
-                          .replaceAll('\n', r'\n')
-                          .replaceAll('\x1b', 'ESC'),
-                      style: const TextStyle(
-                        color: Color(0xFFCBD5E1),
-                        fontSize: 10,
-                        fontFamily: 'monospace',
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 20,
+                    minHeight: 20,
                   ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.edit_note,
-                      size: 14,
-                      color: Color(0xFF64748B),
-                    ),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 20,
-                      minHeight: 20,
-                    ),
-                    onPressed: () => _editRawEventDialog(ev),
-                  ),
-                ],
-              ),
+                  onPressed: () => _editRawEventDialog(ev),
+                ),
+              ],
             ),
           ),
       ],
     );
   }
 
-  Future<void> _editRawEventDialog(BakedTimelineEvent ev) async {
+  String _escapeEventData(String raw) {
+    return raw
+        .replaceAll(r'\', r'\\')
+        .replaceAll('\r', r'\r')
+        .replaceAll('\n', r'\n')
+        .replaceAll('\t', r'\t')
+        .replaceAll('\x1b', r'\x1b');
+  }
+
+  String _unescapeEventData(String escaped) {
+    final buf = StringBuffer();
+    for (var i = 0; i < escaped.length; i++) {
+      final ch = escaped[i];
+      if (ch == r'\' && i + 1 < escaped.length) {
+        final next = escaped[i + 1];
+        if (next == r'\') {
+          buf.write(r'\');
+          i++;
+          continue;
+        }
+        if (next == 'r') {
+          buf.write('\r');
+          i++;
+          continue;
+        }
+        if (next == 'n') {
+          buf.write('\n');
+          i++;
+          continue;
+        }
+        if (next == 't') {
+          buf.write('\t');
+          i++;
+          continue;
+        }
+        if (next == 'x' && i + 3 < escaped.length) {
+          final hex = escaped.substring(i + 2, i + 4);
+          final code = int.tryParse(hex, radix: 16);
+          if (code != null) {
+            buf.writeCharCode(code);
+            i += 3;
+            continue;
+          }
+        }
+      }
+      buf.write(ch);
+    }
+    return buf.toString();
+  }
+
+  Future<void> _showClipEventsEditorDialog(String clipId) async {
     _controller.pause();
-    final dataCtrl = TextEditingController(text: ev.data);
-    final saved = await showDialog<bool>(
+    var filterType = 'all';
+    await showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('编辑帧数据 (@ ${ev.timelineTime.toStringAsFixed(2)}s)'),
-        content: SizedBox(
-          width: 460,
-          child: TextField(
-            controller: dataCtrl,
-            maxLines: 5,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-            decoration: const InputDecoration(
-              labelText: '终端输出/输入内容 (支持 ANSI 转义序列)',
-              border: OutlineInputBorder(),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          final clipIdx = _controller.clips.indexWhere((c) => c.id == clipId);
+          if (clipIdx < 0) {
+            return const SizedBox.shrink();
+          }
+          final clip = _controller.clips[clipIdx];
+          final items = clip.trimmedEvents
+              .where((e) => filterType == 'all' || e.type == filterType)
+              .toList(growable: false);
+
+          return AlertDialog(
+            title: Text('编辑片段内容 · ${clip.name}'),
+            content: SizedBox(
+              width: 560,
+              height: 420,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final opt in const [
+                        ('all', '全部事件'),
+                        ('o', '终端输出 (o)'),
+                        ('i', '按键输入 (i)'),
+                      ])
+                        ChoiceChip(
+                          label: Text(
+                            opt.$2,
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          selected: filterType == opt.$1,
+                          onSelected: (_) =>
+                              setDialogState(() => filterType = opt.$1),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: items.isEmpty
+                        ? const Center(
+                            child: Text(
+                              '当前筛选下暂无事件帧',
+                              style: TextStyle(color: Color(0xFF94A3B8)),
+                            ),
+                          )
+                        : ListView.separated(
+                            itemCount: items.length,
+                            separatorBuilder: (_, _) =>
+                                const Divider(height: 1),
+                            itemBuilder: (_, index) {
+                              final ev = items[index];
+                              return ListTile(
+                                dense: true,
+                                leading: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: ev.type == 'i'
+                                        ? const Color(0xFF065F46)
+                                        : const Color(0xFF1E3A8A),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    ev.type,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontFamily: 'monospace',
+                                    ),
+                                  ),
+                                ),
+                                title: Text(
+                                  _escapeEventData(ev.data),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontFamily: 'monospace',
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                subtitle: Text(
+                                  '源时间: ${ev.time.toStringAsFixed(3)}s',
+                                  style: const TextStyle(fontSize: 10),
+                                ),
+                                trailing: const Icon(Icons.edit_note, size: 18),
+                                onTap: () async {
+                                  await _editRawEventDialog((
+                                    timelineTime: ev.time,
+                                    type: ev.type,
+                                    data: ev.data,
+                                    clipId: clip.id,
+                                    eventId: ev.id,
+                                  ));
+                                  setDialogState(() {});
+                                },
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('保存修改'),
-          ),
-        ],
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('完成'),
+              ),
+            ],
+          );
+        },
       ),
     );
-    if (saved == true) {
+  }
+
+  Future<void> _editRawEventDialog(BakedTimelineEvent ev) async {
+    _controller.pause();
+    final typeLabel = ev.type == 'i'
+        ? '按键输入 (i)'
+        : ev.type == 'o'
+        ? '终端输出 (o)'
+        : '事件帧 (${ev.type})';
+    final result = await showDialog<({String action, String text})>(
+      context: context,
+      builder: (ctx) => _RawEventEditDialog(
+        title: '编辑$typeLabel (@ ${ev.timelineTime.toStringAsFixed(2)}s)',
+        initialText: _escapeEventData(ev.data),
+      ),
+    );
+    if (result == null) return;
+    if (result.action == 'save') {
       _controller.updateRawEvent(
         clipId: ev.clipId,
         eventId: ev.eventId,
-        newData: dataCtrl.text,
+        newData: _unescapeEventData(result.text),
       );
+    } else if (result.action == 'delete') {
+      _controller.deleteRawEvent(clipId: ev.clipId, eventId: ev.eventId);
     }
   }
 
@@ -1861,6 +2202,21 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                     ),
                   ),
                   TextButton.icon(
+                    onPressed: () {
+                      _controller.setPauseOnMarkers(false);
+                      _controller.play();
+                    },
+                    icon: const Icon(
+                      Icons.fast_forward,
+                      size: 15,
+                      color: Color(0xFFFDE68A),
+                    ),
+                    label: const Text(
+                      '跳过标记暂停',
+                      style: TextStyle(color: Color(0xFFFDE68A), fontSize: 12),
+                    ),
+                  ),
+                  TextButton.icon(
                     onPressed: _controller.play,
                     icon: const Icon(
                       Icons.play_arrow,
@@ -1946,135 +2302,166 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
               ),
             ],
           ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(
-                      Icons.skip_previous,
-                      size: 18,
-                      color: Colors.white70,
-                    ),
-                    tooltip: '回到开头 (Home)',
-                    onPressed: _controller.jumpToStart,
-                  ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.bookmark_remove_outlined,
-                      size: 17,
-                      color: Color(0xFFF59E0B),
-                    ),
-                    tooltip: '上一个标记 (Shift+↑ / [)',
-                    onPressed: _controller.markers.isEmpty
-                        ? null
-                        : _controller.jumpToPrevMarker,
-                  ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.navigate_before,
-                      size: 20,
-                      color: Colors.white70,
-                    ),
-                    tooltip: '上一帧 (← / ,)',
-                    onPressed: _controller.stepBackwardFrame,
-                  ),
-                  FilledButton.icon(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF0EA5E9),
-                      foregroundColor: Colors.white,
-                    ),
-                    onPressed: _controller.togglePlay,
-                    icon: Icon(
-                      _controller.isPlaying ? Icons.pause : Icons.play_arrow,
-                      size: 18,
-                    ),
-                    label: Text(
-                      _controller.isPlaying ? '暂停' : '播放',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.navigate_next,
-                      size: 20,
-                      color: Colors.white70,
-                    ),
-                    tooltip: '下一帧 (→ / .)',
-                    onPressed: _controller.stepForwardFrame,
-                  ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.bookmark_add_outlined,
-                      size: 17,
-                      color: Color(0xFFF59E0B),
-                    ),
-                    tooltip: '下一个标记 (Shift+↓ / ])',
-                    onPressed: _controller.markers.isEmpty
-                        ? null
-                        : _controller.jumpToNextMarker,
-                  ),
-                  IconButton(
-                    icon: const Icon(
-                      Icons.skip_next,
-                      size: 18,
-                      color: Colors.white70,
-                    ),
-                    tooltip: '跳转到最终结果 (End)',
-                    onPressed: _controller.jumpToFinalResult,
-                  ),
-                ],
-              ),
-              // Speed controller & Loop toggle
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (final spd in const [0.5, 1.0, 1.5, 2.0, 4.0])
-                    Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: InkWell(
-                        onTap: () => _controller.setPlaybackSpeed(spd),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 7,
-                            vertical: 4,
+          LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(
+                              Icons.skip_previous,
+                              size: 18,
+                              color: Colors.white70,
+                            ),
+                            tooltip: '回到开头 (Home)',
+                            onPressed: _controller.jumpToStart,
                           ),
-                          decoration: BoxDecoration(
-                            color:
-                                (_controller.playbackSpeed - spd).abs() < 0.02
-                                ? const Color(0xFF0EA5E9)
-                                : const Color(0xFF1E2433),
-                            borderRadius: BorderRadius.circular(4),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.bookmark_remove_outlined,
+                              size: 17,
+                              color: Color(0xFFF59E0B),
+                            ),
+                            tooltip: '上一个标记 (Shift+↑ / [)',
+                            onPressed: _controller.markers.isEmpty
+                                ? null
+                                : _controller.jumpToPrevMarker,
                           ),
-                          child: Text(
-                            '${spd}x',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontFamily: 'monospace',
-                              fontWeight: FontWeight.w600,
+                          IconButton(
+                            icon: const Icon(
+                              Icons.navigate_before,
+                              size: 20,
+                              color: Colors.white70,
+                            ),
+                            tooltip: '上一帧 (← / ,)',
+                            onPressed: _controller.stepBackwardFrame,
+                          ),
+                          FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF0EA5E9),
+                              foregroundColor: Colors.white,
+                            ),
+                            onPressed: _controller.togglePlay,
+                            icon: Icon(
+                              _controller.isPlaying
+                                  ? Icons.pause
+                                  : Icons.play_arrow,
+                              size: 18,
+                            ),
+                            label: Text(
+                              _controller.isPlaying ? '暂停' : '播放',
+                              style: const TextStyle(fontSize: 12),
                             ),
                           ),
-                        ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.navigate_next,
+                              size: 20,
+                              color: Colors.white70,
+                            ),
+                            tooltip: '下一帧 (→ / .)',
+                            onPressed: _controller.stepForwardFrame,
+                          ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.bookmark_add_outlined,
+                              size: 17,
+                              color: Color(0xFFF59E0B),
+                            ),
+                            tooltip: '下一个标记 (Shift+↓ / ])',
+                            onPressed: _controller.markers.isEmpty
+                                ? null
+                                : _controller.jumpToNextMarker,
+                          ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.skip_next,
+                              size: 18,
+                              color: Colors.white70,
+                            ),
+                            tooltip: '跳转到最终结果 (End)',
+                            onPressed: _controller.jumpToFinalResult,
+                          ),
+                        ],
                       ),
-                    ),
-                  IconButton(
-                    icon: Icon(
-                      Icons.repeat,
-                      size: 17,
-                      color: _controller.isLooping
-                          ? const Color(0xFF38BDF8)
-                          : const Color(0xFF64748B),
-                    ),
-                    tooltip: '循环播放',
-                    onPressed: () =>
-                        _controller.setLooping(!_controller.isLooping),
+                      // Speed controller & Loop toggle
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final spd in const [0.5, 1.0, 1.5, 2.0, 4.0])
+                            Padding(
+                              padding: const EdgeInsets.only(right: 4),
+                              child: InkWell(
+                                onTap: () => _controller.setPlaybackSpeed(spd),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 7,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color:
+                                        (_controller.playbackSpeed - spd)
+                                                .abs() <
+                                            0.02
+                                        ? const Color(0xFF0EA5E9)
+                                        : const Color(0xFF1E2433),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    '${spd}x',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontFamily: 'monospace',
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          IconButton(
+                            icon: Icon(
+                              _controller.pauseOnMarkers
+                                  ? Icons.flag
+                                  : Icons.outlined_flag,
+                              size: 17,
+                              color: _controller.pauseOnMarkers
+                                  ? const Color(0xFFF59E0B)
+                                  : const Color(0xFF64748B),
+                            ),
+                            tooltip: _controller.pauseOnMarkers
+                                ? '遇到标记自动暂停：已开启 (点击跳过标记暂停，Ctrl+M)'
+                                : '遇到标记自动暂停：已跳过 (点击恢复标记暂停，Ctrl+M)',
+                            onPressed: () => _controller.setPauseOnMarkers(
+                              !_controller.pauseOnMarkers,
+                            ),
+                          ),
+                          IconButton(
+                            icon: Icon(
+                              Icons.repeat,
+                              size: 17,
+                              color: _controller.isLooping
+                                  ? const Color(0xFF38BDF8)
+                                  : const Color(0xFF64748B),
+                            ),
+                            tooltip: '循环播放 (Ctrl+L)',
+                            onPressed: () =>
+                                _controller.setLooping(!_controller.isLooping),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ],
+                ),
+              );
+            },
           ),
         ],
       ),
@@ -2183,6 +2570,68 @@ class AsciicastEditorDialog extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _RawEventEditDialog extends StatefulWidget {
+  const _RawEventEditDialog({required this.title, required this.initialText});
+
+  final String title;
+  final String initialText;
+
+  @override
+  State<_RawEventEditDialog> createState() => _RawEventEditDialogState();
+}
+
+class _RawEventEditDialogState extends State<_RawEventEditDialog> {
+  late final TextEditingController _dataCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _dataCtrl = TextEditingController(text: widget.initialText);
+  }
+
+  @override
+  void dispose() {
+    _dataCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: SizedBox(
+        width: 480,
+        child: TextField(
+          controller: _dataCtrl,
+          autofocus: true,
+          maxLines: 5,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          decoration: const InputDecoration(
+            labelText: '内容 (支持 \\r、\\n、\\t、\\x1b 转义序列)',
+            border: OutlineInputBorder(),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, (action: 'delete', text: '')),
+          style: TextButton.styleFrom(foregroundColor: const Color(0xFFF87171)),
+          child: const Text('删除此帧'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, null),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () =>
+              Navigator.pop(context, (action: 'save', text: _dataCtrl.text)),
+          child: const Text('保存修改'),
+        ),
+      ],
     );
   }
 }

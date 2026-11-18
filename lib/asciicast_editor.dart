@@ -12,6 +12,7 @@ export 'src/models.dart'
         AsciicastEvent,
         AsciicastHeader,
         AsciicastMarker,
+        AutoSliceMode,
         NleToolMode,
         TerminalPreviewTheme;
 export 'src/terminal_preview.dart' show AsciicastTerminalPreview;

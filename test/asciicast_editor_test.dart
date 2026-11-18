@@ -266,4 +266,217 @@ void main() {
       controller.pause();
     },
   );
+
+  test('supports auto-slicing clips by output lines and by input events', () {
+    const multiLineAndInputCast = '''
+{"version": 2, "width": 80, "height": 24}
+[0.2, "i", "l"]
+[0.5, "o", "line 1\\r\\n"]
+[1.2, "i", "pwd\\r"]
+[1.5, "o", "/home/user\\r\\n"]
+[2.4, "i", "exit\\r"]
+[2.8, "o", "bye\\r\\n"]
+''';
+    // 1. Slice by output line
+    final lineCtrl = AsciicastEditorController(
+      initialCastContent: multiLineAndInputCast,
+    );
+    addTearDown(lineCtrl.dispose);
+
+    final addedByLine = lineCtrl.autoSliceClips(
+      mode: AutoSliceMode.byLine,
+      minClipDuration: 0.2,
+    );
+    expect(addedByLine, 2);
+    expect(lineCtrl.clips.length, 3);
+
+    // Undo restores single clip
+    lineCtrl.undo();
+    expect(lineCtrl.clips.length, 1);
+
+    // 2. Slice by input event
+    final inputCtrl = AsciicastEditorController(
+      initialCastContent: multiLineAndInputCast,
+    );
+    addTearDown(inputCtrl.dispose);
+
+    final addedByInput = inputCtrl.autoSliceClips(
+      mode: AutoSliceMode.byInput,
+      minClipDuration: 0.2,
+    );
+    expect(addedByInput, 2);
+    expect(inputCtrl.clips.length, 3);
+  });
+
+  testWidgets('toggles skip-marker-pause via Ctrl+M and transport button', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final controller = AsciicastEditorController(
+      initialCastContent: sampleV2Cast,
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: AsciicastEditor(controller: controller)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(controller.pauseOnMarkers, isTrue);
+
+    // Toggle via Ctrl+M
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyM);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    expect(controller.pauseOnMarkers, isFalse);
+
+    // Toggle back via transport deck flag button
+    await tester.tap(find.byIcon(Icons.outlined_flag));
+    await tester.pump();
+    expect(controller.pauseOnMarkers, isTrue);
+  });
+
+  testWidgets(
+    'marker drag and clip trim drag track pointer 1:1 without offset',
+    (tester) async {
+      const castWithIdle = '''
+{"version": 2, "width": 80, "height": 24, "idle_time_limit": 2.0}
+[0.5, "o", "start\\r\\n"]
+[1.5, "m", "MarkA"]
+[12.0, "o", "end\\r\\n"]
+''';
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = AsciicastEditorController(
+        initialCastContent: castWithIdle,
+      );
+      addTearDown(controller.dispose);
+      controller.setTimelineZoom(50.0); // 50px = 1.0s
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1200,
+              height: 220,
+              child: AsciicastTimelinePanel(controller: controller),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 1. Drag marker MarkA by +25px -> should move +0.5s exactly
+      final initialMarkerTime = controller.markers.single.time;
+      final markerFinder = find.text('MarkA');
+      await tester.drag(markerFinder, const Offset(25.0, 0.0));
+      await tester.pumpAndSettle();
+      expect(
+        controller.markers.single.time,
+        closeTo(initialMarkerTime + 0.5, 0.05),
+      );
+
+      // Undo should restore marker to exact pre-drag time
+      controller.undo();
+      expect(controller.markers.single.time, closeTo(initialMarkerTime, 0.01));
+
+      // 2. Drag clip right trim handle by -50px -> should shrink span by -1.0s
+      final initialEnd = controller.computeClipSpans().single.end;
+      final clipTopLeft = tester.getTopLeft(
+        find.text(controller.clips.single.name),
+      );
+      // Right trim handle is at x = 149 + initialEnd * 50 - 4
+      final handleStart = Offset(
+        149.0 + initialEnd * 50.0 - 4.0,
+        clipTopLeft.dy + 20.0,
+      );
+      await tester.dragFrom(handleStart, const Offset(-50.0, 0.0));
+      await tester.pumpAndSettle();
+      final updatedEnd = controller.computeClipSpans().single.end;
+      expect(updatedEnd, closeTo(initialEnd - 1.0, 0.15));
+    },
+  );
+
+  testWidgets(
+    'allows editing marker text, keystroke input, and terminal output',
+    (tester) async {
+      const castWithInputAndOutput = '''
+{"version": 2, "width": 80, "height": 24}
+[0.3, "i", "ls\\r"]
+[0.6, "o", "file1\\r\\n"]
+[1.0, "m", "OldMarker"]
+''';
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = AsciicastEditorController(
+        initialCastContent: castWithInputAndOutput,
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: AsciicastEditor(controller: controller)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 1. Double-tap marker pill on timeline to edit marker text
+      final markerFinder = find.text('OldMarker');
+      await tester.tap(markerFinder);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(markerFinder);
+      await tester.pumpAndSettle();
+      expect(find.text('编辑关键标记'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).first, 'NewMarker');
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+      expect(controller.markers.single.label, 'NewMarker');
+
+      // 2. Open Events/History tab, filter to input (i), and edit keystroke input
+      await tester.tap(find.text('事件帧/历史'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('按键输入 (i)'));
+      await tester.pumpAndSettle();
+      final editBtn = find.byIcon(Icons.edit_note);
+      expect(editBtn, findsOneWidget);
+      await tester.tap(editBtn);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.textContaining('编辑按键输入 (i)'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).first, r'pwd\r');
+      await tester.tap(find.text('保存修改'));
+      await tester.pumpAndSettle();
+      expect(
+        controller.clips.single.events.firstWhere((e) => e.type == 'i').data,
+        'pwd\r',
+      );
+
+      // 3. Filter to output (o) and edit terminal output
+      await tester.tap(find.text('终端输出 (o)'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.edit_note).first);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('编辑终端输出 (o)'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).first, r'/workspace\r\n');
+      await tester.tap(find.text('保存修改'));
+      await tester.pumpAndSettle();
+      expect(
+        controller.clips.single.events.firstWhere((e) => e.type == 'o').data,
+        '/workspace\r\n',
+      );
+    },
+  );
 }

@@ -13,6 +13,15 @@ enum NleToolMode {
   hand,
 }
 
+/// Auto-slice strategy for automatically splitting timeline clips.
+enum AutoSliceMode {
+  /// Split clips at output newline boundaries (`\n` in `'o'` events).
+  byLine,
+
+  /// Split clips at input event boundaries (`'i'` events).
+  byInput,
+}
+
 /// Color themes available for the `termui_flutter` Program Monitor preview.
 enum TerminalPreviewTheme {
   termuiDark(

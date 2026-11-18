@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import 'controller.dart';
@@ -7,9 +8,18 @@ import 'models.dart';
 
 /// Multi-track NLE timeline widget inspired by Premiere Pro, DaVinci Resolve, and Kdenlive.
 class AsciicastTimelinePanel extends StatefulWidget {
-  const AsciicastTimelinePanel({super.key, required this.controller});
+  const AsciicastTimelinePanel({
+    super.key,
+    required this.controller,
+    this.onEditMarker,
+    this.onEditEvent,
+    this.onEditClipEvents,
+  });
 
   final AsciicastEditorController controller;
+  final ValueChanged<AsciicastMarker>? onEditMarker;
+  final ValueChanged<BakedTimelineEvent>? onEditEvent;
+  final ValueChanged<String>? onEditClipEvents;
 
   @override
   State<AsciicastTimelinePanel> createState() => _AsciicastTimelinePanelState();
@@ -18,6 +28,22 @@ class AsciicastTimelinePanel extends StatefulWidget {
 class _AsciicastTimelinePanelState extends State<AsciicastTimelinePanel> {
   final ScrollController _horizontalScroll = ScrollController();
   double? _hoverRazorTime;
+  String? _hoveredInputEventId;
+  Offset? _lastInputTapLocalPos;
+
+  // Marker drag baseline (global X -> 1:1 tracking)
+  String? _draggingMarkerId;
+  double _markerDragStartGlobalX = 0.0;
+  double _markerDragStartTime = 0.0;
+  bool _markerDragMoved = false;
+
+  // Clip trim drag baseline (global X -> 1:1 tracking)
+  String? _trimmingClipId;
+  double _trimDragStartGlobalX = 0.0;
+  double _trimStartSpanDuration = 0.0;
+  double _trimStartSourceStart = 0.0;
+  double _trimStartSourceEnd = 0.0;
+  bool _trimChanged = false;
 
   static const double _trackHeaderWidth = 148.0;
   static const double _rulerHeight = 28.0;
@@ -148,7 +174,10 @@ class _AsciicastTimelinePanelState extends State<AsciicastTimelinePanel> {
                                   // 1. Time Ruler
                                   GestureDetector(
                                     behavior: HitTestBehavior.opaque,
+                                    dragStartBehavior: DragStartBehavior.down,
                                     onTapDown: (d) =>
+                                        _scrubAtLocalDx(d.localPosition.dx),
+                                    onHorizontalDragStart: (d) =>
                                         _scrubAtLocalDx(d.localPosition.dx),
                                     onHorizontalDragUpdate: (d) =>
                                         _scrubAtLocalDx(d.localPosition.dx),
@@ -324,27 +353,45 @@ class _AsciicastTimelinePanelState extends State<AsciicastTimelinePanel> {
         children: [
           for (final marker in ctrl.markers)
             Positioned(
+              key: ValueKey(marker.id),
               left: _timeToX(marker.time),
               top: 4,
               child: GestureDetector(
+                dragStartBehavior: DragStartBehavior.down,
                 onTap: () {
                   ctrl.selectMarker(marker.id);
                   ctrl.seek(marker.time);
                 },
-                onHorizontalDragEnd: (_) {
-                  ctrl.updateMarker(
-                    marker.id,
-                    time: marker.time,
-                    recordHistory: true,
-                  );
+                onDoubleTap: () => widget.onEditMarker?.call(marker),
+                onHorizontalDragStart: (d) {
+                  _draggingMarkerId = marker.id;
+                  _markerDragStartGlobalX = d.globalPosition.dx;
+                  _markerDragStartTime = marker.time;
+                  _markerDragMoved = false;
                 },
                 onHorizontalDragUpdate: (d) {
-                  final nextTime = marker.time + d.delta.dx / ctrl.timelineZoom;
+                  if (_draggingMarkerId != marker.id) return;
+                  final totalDx = d.globalPosition.dx - _markerDragStartGlobalX;
+                  if (totalDx.abs() < 0.5 && !_markerDragMoved) return;
+                  if (!_markerDragMoved) {
+                    ctrl.recordHistorySnapshot('移动标记 "${marker.label}"');
+                    _markerDragMoved = true;
+                  }
+                  final nextTime =
+                      _markerDragStartTime + totalDx / ctrl.timelineZoom;
                   ctrl.updateMarker(
                     marker.id,
                     time: nextTime,
                     recordHistory: false,
                   );
+                },
+                onHorizontalDragEnd: (_) {
+                  _draggingMarkerId = null;
+                  _markerDragMoved = false;
+                },
+                onHorizontalDragCancel: () {
+                  _draggingMarkerId = null;
+                  _markerDragMoved = false;
                 },
                 child: Container(
                   padding: const EdgeInsets.symmetric(
@@ -456,6 +503,12 @@ class _AsciicastTimelinePanelState extends State<AsciicastTimelinePanel> {
             ctrl.selectClip(clip.id);
           }
         },
+        onDoubleTap: () {
+          if (ctrl.activeTool != NleToolMode.razor) {
+            ctrl.selectClip(clip.id);
+            widget.onEditClipEvents?.call(clip.id);
+          }
+        },
         child: Container(
           decoration: BoxDecoration(
             color: clip.muted
@@ -552,21 +605,40 @@ class _AsciicastTimelinePanelState extends State<AsciicastTimelinePanel> {
                   cursor: SystemMouseCursors.resizeLeftRight,
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
+                    dragStartBehavior: DragStartBehavior.down,
+                    onHorizontalDragStart: (d) {
+                      _trimmingClipId = clip.id;
+                      _trimDragStartGlobalX = d.globalPosition.dx;
+                      _trimStartSpanDuration = span.end - span.start;
+                      _trimStartSourceStart = clip.sourceStart;
+                      _trimStartSourceEnd = clip.sourceEnd;
+                      _trimChanged = false;
+                    },
                     onHorizontalDragUpdate: (d) {
-                      final deltaSource =
-                          (d.delta.dx / ctrl.timelineZoom) * clip.speed;
-                      ctrl.trimClip(
-                        clip.id,
-                        newSourceStart: clip.sourceStart + deltaSource,
-                        recordHistory: false,
+                      if (_trimmingClipId != clip.id) return;
+                      final totalDx =
+                          d.globalPosition.dx - _trimDragStartGlobalX;
+                      if (totalDx.abs() < 0.5 && !_trimChanged) return;
+                      if (!_trimChanged) {
+                        ctrl.recordHistorySnapshot('裁剪片段 "${clip.name}" 入点');
+                        _trimChanged = true;
+                      }
+                      ctrl.trimClipByTimelineDelta(
+                        clipId: clip.id,
+                        initialSourceStart: _trimStartSourceStart,
+                        initialSourceEnd: _trimStartSourceEnd,
+                        initialTimelineDuration: _trimStartSpanDuration,
+                        deltaTimelineSeconds: totalDx / ctrl.timelineZoom,
+                        trimStart: true,
                       );
                     },
                     onHorizontalDragEnd: (_) {
-                      ctrl.trimClip(
-                        clip.id,
-                        newSourceStart: clip.sourceStart,
-                        recordHistory: true,
-                      );
+                      _trimmingClipId = null;
+                      _trimChanged = false;
+                    },
+                    onHorizontalDragCancel: () {
+                      _trimmingClipId = null;
+                      _trimChanged = false;
                     },
                     child: Container(
                       color: isSelected
@@ -586,21 +658,40 @@ class _AsciicastTimelinePanelState extends State<AsciicastTimelinePanel> {
                   cursor: SystemMouseCursors.resizeLeftRight,
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
+                    dragStartBehavior: DragStartBehavior.down,
+                    onHorizontalDragStart: (d) {
+                      _trimmingClipId = clip.id;
+                      _trimDragStartGlobalX = d.globalPosition.dx;
+                      _trimStartSpanDuration = span.end - span.start;
+                      _trimStartSourceStart = clip.sourceStart;
+                      _trimStartSourceEnd = clip.sourceEnd;
+                      _trimChanged = false;
+                    },
                     onHorizontalDragUpdate: (d) {
-                      final deltaSource =
-                          (d.delta.dx / ctrl.timelineZoom) * clip.speed;
-                      ctrl.trimClip(
-                        clip.id,
-                        newSourceEnd: clip.sourceEnd + deltaSource,
-                        recordHistory: false,
+                      if (_trimmingClipId != clip.id) return;
+                      final totalDx =
+                          d.globalPosition.dx - _trimDragStartGlobalX;
+                      if (totalDx.abs() < 0.5 && !_trimChanged) return;
+                      if (!_trimChanged) {
+                        ctrl.recordHistorySnapshot('裁剪片段 "${clip.name}" 出点');
+                        _trimChanged = true;
+                      }
+                      ctrl.trimClipByTimelineDelta(
+                        clipId: clip.id,
+                        initialSourceStart: _trimStartSourceStart,
+                        initialSourceEnd: _trimStartSourceEnd,
+                        initialTimelineDuration: _trimStartSpanDuration,
+                        deltaTimelineSeconds: totalDx / ctrl.timelineZoom,
+                        trimStart: false,
                       );
                     },
                     onHorizontalDragEnd: (_) {
-                      ctrl.trimClip(
-                        clip.id,
-                        newSourceEnd: clip.sourceEnd,
-                        recordHistory: true,
-                      );
+                      _trimmingClipId = null;
+                      _trimChanged = false;
+                    },
+                    onHorizontalDragCancel: () {
+                      _trimmingClipId = null;
+                      _trimChanged = false;
                     },
                     child: Container(
                       color: isSelected
@@ -617,22 +708,88 @@ class _AsciicastTimelinePanelState extends State<AsciicastTimelinePanel> {
     );
   }
 
+  BakedTimelineEvent? _findNearestInputEvent(
+    List<BakedTimelineEvent> inputEvents,
+    double localDx,
+    double zoom,
+  ) {
+    BakedTimelineEvent? nearest;
+    var bestDist = 12.0;
+    for (final ev in inputEvents) {
+      final dist = (ev.timelineTime * zoom - localDx).abs();
+      if (dist <= bestDist) {
+        bestDist = dist;
+        nearest = ev;
+      }
+    }
+    return nearest;
+  }
+
   Widget _buildInputTrack(
     AsciicastEditorController ctrl,
     List<BakedTimelineEvent> inputEvents,
     double canvasWidth,
   ) {
-    return Container(
-      height: _inputTrackHeight,
-      width: canvasWidth,
-      decoration: const BoxDecoration(
-        color: Color(0xFF131720),
-        border: Border(bottom: BorderSide(color: Color(0xFF262B38))),
-      ),
-      child: CustomPaint(
-        painter: _InputEventsPainter(
-          inputEvents: inputEvents,
-          zoom: ctrl.timelineZoom,
+    return MouseRegion(
+      cursor: _hoveredInputEventId != null
+          ? SystemMouseCursors.click
+          : SystemMouseCursors.basic,
+      onHover: (e) {
+        final hit = _findNearestInputEvent(
+          inputEvents,
+          e.localPosition.dx,
+          ctrl.timelineZoom,
+        );
+        if (hit?.eventId != _hoveredInputEventId) {
+          setState(() => _hoveredInputEventId = hit?.eventId);
+        }
+      },
+      onExit: (_) {
+        if (_hoveredInputEventId != null) {
+          setState(() => _hoveredInputEventId = null);
+        }
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapUp: (d) {
+          final hit = _findNearestInputEvent(
+            inputEvents,
+            d.localPosition.dx,
+            ctrl.timelineZoom,
+          );
+          if (hit != null) {
+            ctrl.seek(hit.timelineTime);
+          } else {
+            _scrubAtLocalDx(d.localPosition.dx);
+          }
+        },
+        onDoubleTapDown: (d) => _lastInputTapLocalPos = d.localPosition,
+        onDoubleTap: () {
+          final pos = _lastInputTapLocalPos;
+          if (pos == null) return;
+          final hit = _findNearestInputEvent(
+            inputEvents,
+            pos.dx,
+            ctrl.timelineZoom,
+          );
+          if (hit != null) {
+            widget.onEditEvent?.call(hit);
+          }
+        },
+        child: Container(
+          height: _inputTrackHeight,
+          width: canvasWidth,
+          decoration: const BoxDecoration(
+            color: Color(0xFF131720),
+            border: Border(bottom: BorderSide(color: Color(0xFF262B38))),
+          ),
+          child: CustomPaint(
+            painter: _InputEventsPainter(
+              inputEvents: inputEvents,
+              zoom: ctrl.timelineZoom,
+              hoveredEventId: _hoveredInputEventId,
+            ),
+          ),
         ),
       ),
     );
@@ -798,10 +955,15 @@ class _ClipWaveformPainter extends CustomPainter {
 }
 
 class _InputEventsPainter extends CustomPainter {
-  _InputEventsPainter({required this.inputEvents, required this.zoom});
+  _InputEventsPainter({
+    required this.inputEvents,
+    required this.zoom,
+    this.hoveredEventId,
+  });
 
   final List<BakedTimelineEvent> inputEvents;
   final double zoom;
+  final String? hoveredEventId;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -809,22 +971,29 @@ class _InputEventsPainter extends CustomPainter {
     final paint = Paint()
       ..color = const Color(0xFF10B981)
       ..style = PaintingStyle.fill;
+    final hoveredPaint = Paint()
+      ..color = const Color(0xFF34D399)
+      ..style = PaintingStyle.fill;
     final cy = size.height / 2;
 
     for (final ev in inputEvents) {
       final cx = ev.timelineTime * zoom;
       if (cx < 0 || cx > size.width) continue;
+      final isHovered = ev.eventId == hoveredEventId;
+      final r = isHovered ? 6.5 : 5.0;
       final path = Path()
-        ..moveTo(cx, cy - 5)
-        ..lineTo(cx + 4, cy)
-        ..lineTo(cx, cy + 5)
-        ..lineTo(cx - 4, cy)
+        ..moveTo(cx, cy - r)
+        ..lineTo(cx + r * 0.85, cy)
+        ..lineTo(cx, cy + r)
+        ..lineTo(cx - r * 0.85, cy)
         ..close();
-      canvas.drawPath(path, paint);
+      canvas.drawPath(path, isHovered ? hoveredPaint : paint);
     }
   }
 
   @override
   bool shouldRepaint(covariant _InputEventsPainter oldDelegate) =>
-      oldDelegate.inputEvents != inputEvents || oldDelegate.zoom != zoom;
+      oldDelegate.inputEvents != inputEvents ||
+      oldDelegate.zoom != zoom ||
+      oldDelegate.hoveredEventId != hoveredEventId;
 }

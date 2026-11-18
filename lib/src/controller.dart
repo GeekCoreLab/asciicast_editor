@@ -176,6 +176,11 @@ class AsciicastEditorController extends ChangeNotifier {
     _rebuildBakedTimeline(targetPlayhead: 0.0);
   }
 
+  /// Records an undo snapshot of the current editor state before a live drag mutation.
+  void recordHistorySnapshot(String description) {
+    _recordSnapshot(description);
+  }
+
   void _recordSnapshot(String description) {
     _undoStack.add(
       _HistorySnapshot(
@@ -472,6 +477,9 @@ class AsciicastEditorController extends ChangeNotifier {
 
   void setPauseOnMarkers(bool value) {
     _pauseOnMarkers = value;
+    if (!value) {
+      _pausedAtMarkerLabel = null;
+    }
     notifyListeners();
   }
 
@@ -668,8 +676,93 @@ class AsciicastEditorController extends ChangeNotifier {
     return false;
   }
 
-  /// Splits the clip under the current playhead (`Ctrl+K` / Razor at Playhead).
+  /// Splits the clip under the current playhead (`Ctrl+B` / `Ctrl+K`).
   bool splitAtPlayhead() => splitClipAt(_playheadTime);
+
+  /// Automatically slices clips on the timeline by output lines or input events.
+  ///
+  /// Returns the number of newly created clips (0 if no valid cut points were found).
+  int autoSliceClips({
+    required AutoSliceMode mode,
+    String? clipId,
+    double minClipDuration = 0.25,
+  }) {
+    final safeMinTimelineGap = math.max(0.02, minClipDuration);
+    final nextClips = <AsciicastClip>[];
+    var addedClips = 0;
+    var colorIdx = _clips.length;
+    var hasAnySlice = false;
+
+    for (final clip in _clips) {
+      if (clipId != null && clip.id != clipId) {
+        nextClips.add(clip);
+        continue;
+      }
+
+      final speed = clip.speed <= 0 ? 1.0 : clip.speed;
+      final minSourceGap = safeMinTimelineGap * speed;
+      final cutPoints = <double>[];
+      var lastCut = clip.sourceStart;
+
+      for (final ev in clip.trimmedEvents) {
+        final isMatch = switch (mode) {
+          AutoSliceMode.byLine => ev.type == 'o' && ev.data.contains('\n'),
+          AutoSliceMode.byInput => ev.type == 'i',
+        };
+        if (!isMatch) continue;
+
+        // Cut just after newline output (so the newline stays with its line),
+        // or just before input (so the input starts the new clip).
+        final candidate = mode == AutoSliceMode.byLine
+            ? ev.time + 1e-4
+            : ev.time - 1e-4;
+        if (candidate - lastCut < minSourceGap) continue;
+        if (clip.sourceEnd - candidate < minSourceGap) continue;
+
+        cutPoints.add(candidate);
+        lastCut = candidate;
+      }
+
+      if (cutPoints.isEmpty) {
+        nextClips.add(clip);
+        continue;
+      }
+
+      hasAnySlice = true;
+      final boundaries = <double>[
+        clip.sourceStart,
+        ...cutPoints,
+        clip.sourceEnd,
+      ];
+      for (var i = 0; i < boundaries.length - 1; i++) {
+        nextClips.add(
+          clip.copyWith(
+            id: _nextId('clip'),
+            name: '${clip.name} #${i + 1}',
+            sourceStart: boundaries[i],
+            sourceEnd: boundaries[i + 1],
+            colorValue: i == 0
+                ? clip.colorValue
+                : _clipPalette[(colorIdx++) % _clipPalette.length],
+          ),
+        );
+      }
+      addedClips += boundaries.length - 2;
+    }
+
+    if (!hasAnySlice) return 0;
+
+    final modeLabel = mode == AutoSliceMode.byLine ? '按行' : '按输入';
+    _recordSnapshot('自动切片 ($modeLabel，新增 $addedClips 个片段)');
+    _clips = nextClips;
+    if (_selectedClipId == null ||
+        !_clips.any((c) => c.id == _selectedClipId)) {
+      _selectedClipId = _clips.isNotEmpty ? _clips.first.id : null;
+    }
+    _rebuildBakedTimeline(targetPlayhead: _playheadTime);
+    notifyListeners();
+    return addedClips;
+  }
 
   /// Trims the In-point (`newSourceStart`) and/or Out-point (`newSourceEnd`) of a clip.
   void trimClip(
@@ -702,6 +795,103 @@ class AsciicastEditorController extends ChangeNotifier {
     _clips[index] = clip.copyWith(sourceStart: start, sourceEnd: end);
     _rebuildBakedTimeline(targetPlayhead: _playheadTime);
     notifyListeners();
+  }
+
+  /// Trims a clip's In-point or Out-point by an exact timeline-seconds delta
+  /// from its pre-drag state, accounting for clip `speed` and `idleTimeLimit`
+  /// so visual drag distance matches pointer movement 1:1.
+  void trimClipByTimelineDelta({
+    required String clipId,
+    required double initialSourceStart,
+    required double initialSourceEnd,
+    required double initialTimelineDuration,
+    required double deltaTimelineSeconds,
+    required bool trimStart,
+  }) {
+    final index = _clips.indexWhere((c) => c.id == clipId);
+    if (index < 0) return;
+    final clip = _clips[index];
+    final speed = clip.speed <= 0 ? 1.0 : clip.speed;
+    final idleLimit = _header.idleTimeLimit;
+
+    if (!trimStart) {
+      final targetDuration = math.max(
+        0.05,
+        initialTimelineDuration + deltaTimelineSeconds,
+      );
+      var prevSource = initialSourceStart;
+      var accDuration = 0.0;
+      double? resolvedEnd;
+
+      for (final ev in clip.events) {
+        if (ev.time < initialSourceStart - 1e-6) continue;
+        final rawStep = math.max(0.0, (ev.time - prevSource) / speed);
+        final cappedStep = (idleLimit != null && idleLimit > 0)
+            ? math.min(rawStep, idleLimit)
+            : rawStep;
+        if (accDuration + cappedStep >= targetDuration) {
+          final neededTimeline = math.max(0.0, targetDuration - accDuration);
+          resolvedEnd = prevSource + neededTimeline * speed;
+          break;
+        }
+        accDuration += cappedStep;
+        prevSource = ev.time;
+      }
+
+      if (resolvedEnd == null) {
+        var neededTimeline = math.max(0.0, targetDuration - accDuration);
+        if (idleLimit != null && idleLimit > 0) {
+          neededTimeline = math.min(neededTimeline, idleLimit);
+        }
+        resolvedEnd = prevSource + neededTimeline * speed;
+      }
+
+      trimClip(
+        clipId,
+        newSourceStart: initialSourceStart,
+        newSourceEnd: resolvedEnd,
+        recordHistory: false,
+      );
+    } else {
+      final targetDuration = math.max(
+        0.05,
+        initialTimelineDuration - deltaTimelineSeconds,
+      );
+      var prevSource = initialSourceEnd;
+      var accDuration = 0.0;
+      double? resolvedStart;
+
+      for (var i = clip.events.length - 1; i >= 0; i--) {
+        final ev = clip.events[i];
+        if (ev.time > initialSourceEnd + 1e-6) continue;
+        final rawStep = math.max(0.0, (prevSource - ev.time) / speed);
+        final cappedStep = (idleLimit != null && idleLimit > 0)
+            ? math.min(rawStep, idleLimit)
+            : rawStep;
+        if (accDuration + cappedStep >= targetDuration) {
+          final neededTimeline = math.max(0.0, targetDuration - accDuration);
+          resolvedStart = prevSource - neededTimeline * speed;
+          break;
+        }
+        accDuration += cappedStep;
+        prevSource = ev.time;
+      }
+
+      if (resolvedStart == null) {
+        var neededTimeline = math.max(0.0, targetDuration - accDuration);
+        if (idleLimit != null && idleLimit > 0) {
+          neededTimeline = math.min(neededTimeline, idleLimit);
+        }
+        resolvedStart = math.max(0.0, prevSource - neededTimeline * speed);
+      }
+
+      trimClip(
+        clipId,
+        newSourceStart: resolvedStart,
+        newSourceEnd: initialSourceEnd,
+        recordHistory: false,
+      );
+    }
   }
 
   /// Ripple-deletes a clip from the timeline and shifts subsequent markers if `ripple` is true.
@@ -960,6 +1150,22 @@ class AsciicastEditorController extends ChangeNotifier {
       time: newTime,
     );
     updatedEvents.sort((a, b) => a.time.compareTo(b.time));
+    _clips[clipIdx] = clip.copyWith(events: updatedEvents);
+    _rebuildBakedTimeline(targetPlayhead: _playheadTime);
+    notifyListeners();
+  }
+
+  /// Deletes a single raw event (`o` or `i`) from a clip.
+  void deleteRawEvent({required String clipId, required String eventId}) {
+    final clipIdx = _clips.indexWhere((c) => c.id == clipId);
+    if (clipIdx < 0) return;
+    final clip = _clips[clipIdx];
+    final evIdx = clip.events.indexWhere((e) => e.id == eventId);
+    if (evIdx < 0) return;
+
+    _recordSnapshot('删除事件帧 #$eventId');
+    final updatedEvents = List<AsciicastEvent>.from(clip.events)
+      ..removeAt(evIdx);
     _clips[clipIdx] = clip.copyWith(events: updatedEvents);
     _rebuildBakedTimeline(targetPlayhead: _playheadTime);
     notifyListeners();
