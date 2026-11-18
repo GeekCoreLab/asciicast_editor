@@ -217,16 +217,19 @@ class _AsciicastTimelinePanelState extends State<AsciicastTimelinePanel> {
         children: [
           const Icon(Icons.schedule, size: 13, color: Color(0xFF94A3B8)),
           const SizedBox(width: 4),
-          Text(
-            _formatSmpte(ctrl.playheadTime),
-            style: const TextStyle(
-              color: Color(0xFF38BDF8),
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              fontFamily: 'monospace',
+          Expanded(
+            child: Text(
+              _formatSmpte(ctrl.playheadTime),
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFF38BDF8),
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                fontFamily: 'monospace',
+              ),
             ),
           ),
-          const Spacer(),
+          const SizedBox(width: 4),
           Text(
             '${ctrl.timelineZoom.round()}px/s',
             style: const TextStyle(

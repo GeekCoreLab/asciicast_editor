@@ -880,22 +880,29 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      '入点 (In): ${clip.sourceStart.toStringAsFixed(2)}s',
-                      style: const TextStyle(
-                        color: Color(0xFFCBD5E1),
-                        fontSize: 11,
-                        fontFamily: 'monospace',
+                    Expanded(
+                      child: Text(
+                        '入点 (In): ${clip.sourceStart.toStringAsFixed(2)}s',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFFCBD5E1),
+                          fontSize: 11,
+                          fontFamily: 'monospace',
+                        ),
                       ),
                     ),
-                    Text(
-                      '出点 (Out): ${clip.sourceEnd.toStringAsFixed(2)}s',
-                      style: const TextStyle(
-                        color: Color(0xFFCBD5E1),
-                        fontSize: 11,
-                        fontFamily: 'monospace',
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '出点 (Out): ${clip.sourceEnd.toStringAsFixed(2)}s',
+                        textAlign: TextAlign.end,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFFCBD5E1),
+                          fontSize: 11,
+                          fontFamily: 'monospace',
+                        ),
                       ),
                     ),
                   ],
@@ -1012,66 +1019,69 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
 
   Widget _buildClipListTile(AsciicastClip clip, int index) {
     final selected = _controller.selectedClipId == clip.id;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      decoration: BoxDecoration(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Material(
         color: selected ? const Color(0xFF1E293B) : const Color(0xFF161A24),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: selected ? const Color(0xFF38BDF8) : const Color(0xFF262B38),
-        ),
-      ),
-      child: ListTile(
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        onTap: () => _controller.selectClip(clip.id),
-        leading: Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(
-            color: Color(clip.colorValue),
-            shape: BoxShape.circle,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(6),
+          side: BorderSide(
+            color: selected ? const Color(0xFF38BDF8) : const Color(0xFF262B38),
           ),
         ),
-        title: Text(
-          clip.name,
-          style: TextStyle(
-            color: clip.muted ? Colors.grey : Colors.white,
-            fontSize: 12,
-            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-            decoration: clip.muted ? TextDecoration.lineThrough : null,
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          onTap: () => _controller.selectClip(clip.id),
+          leading: Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: Color(clip.colorValue),
+              shape: BoxShape.circle,
+            ),
           ),
-        ),
-        subtitle: Text(
-          '${clip.sourceStart.toStringAsFixed(1)}s - ${clip.sourceEnd.toStringAsFixed(1)}s · ${clip.speed}x',
-          style: const TextStyle(
-            color: Color(0xFF64748B),
-            fontSize: 10,
-            fontFamily: 'monospace',
+          title: Text(
+            clip.name,
+            style: TextStyle(
+              color: clip.muted ? Colors.grey : Colors.white,
+              fontSize: 12,
+              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              decoration: clip.muted ? TextDecoration.lineThrough : null,
+            ),
           ),
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (index > 0)
-              IconButton(
-                icon: const Icon(
-                  Icons.arrow_upward,
-                  size: 14,
-                  color: Color(0xFF94A3B8),
+          subtitle: Text(
+            '${clip.sourceStart.toStringAsFixed(1)}s - ${clip.sourceEnd.toStringAsFixed(1)}s · ${clip.speed}x',
+            style: const TextStyle(
+              color: Color(0xFF64748B),
+              fontSize: 10,
+              fontFamily: 'monospace',
+            ),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (index > 0)
+                IconButton(
+                  icon: const Icon(
+                    Icons.arrow_upward,
+                    size: 14,
+                    color: Color(0xFF94A3B8),
+                  ),
+                  onPressed: () => _controller.moveClip(index, index - 1),
                 ),
-                onPressed: () => _controller.moveClip(index, index - 1),
-              ),
-            if (index < _controller.clips.length - 1)
-              IconButton(
-                icon: const Icon(
-                  Icons.arrow_downward,
-                  size: 14,
-                  color: Color(0xFF94A3B8),
+              if (index < _controller.clips.length - 1)
+                IconButton(
+                  icon: const Icon(
+                    Icons.arrow_downward,
+                    size: 14,
+                    color: Color(0xFF94A3B8),
+                  ),
+                  onPressed: () => _controller.moveClip(index, index + 1),
                 ),
-                onPressed: () => _controller.moveClip(index, index + 1),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1107,15 +1117,18 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                 ],
               ),
               const SizedBox(height: 6),
-              SwitchListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                title: const Text(
-                  '遇到标记自动暂停 (pauseOnMarkers)',
-                  style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 11),
+              Material(
+                type: MaterialType.transparency,
+                child: SwitchListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text(
+                    '遇到标记自动暂停 (pauseOnMarkers)',
+                    style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 11),
+                  ),
+                  value: _controller.pauseOnMarkers,
+                  onChanged: _controller.setPauseOnMarkers,
                 ),
-                value: _controller.pauseOnMarkers,
-                onChanged: _controller.setPauseOnMarkers,
               ),
             ],
           ),
@@ -1139,70 +1152,73 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                   itemBuilder: (context, index) {
                     final marker = _controller.markers[index];
                     final selected = _controller.selectedMarkerId == marker.id;
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 6),
-                      decoration: BoxDecoration(
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Material(
                         color: selected
                             ? const Color(0xFF78350F).withValues(alpha: 0.4)
                             : const Color(0xFF161A24),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: selected
-                              ? const Color(0xFFF59E0B)
-                              : const Color(0xFF262B38),
-                        ),
-                      ),
-                      child: ListTile(
-                        dense: true,
-                        visualDensity: VisualDensity.compact,
-                        onTap: () {
-                          _controller.selectMarker(marker.id);
-                          _controller.seek(marker.time);
-                        },
-                        leading: const Icon(
-                          Icons.flag,
-                          size: 16,
-                          color: Color(0xFFF59E0B),
-                        ),
-                        title: Text(
-                          marker.label,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                          side: BorderSide(
+                            color: selected
+                                ? const Color(0xFFF59E0B)
+                                : const Color(0xFF262B38),
                           ),
                         ),
-                        subtitle: Text(
-                          '${marker.time.toStringAsFixed(2)}s (${_formatTimecode(marker.time)})',
-                          style: const TextStyle(
-                            color: Color(0xFFFBBF24),
-                            fontSize: 10,
-                            fontFamily: 'monospace',
+                        clipBehavior: Clip.antiAlias,
+                        child: ListTile(
+                          dense: true,
+                          visualDensity: VisualDensity.compact,
+                          onTap: () {
+                            _controller.selectMarker(marker.id);
+                            _controller.seek(marker.time);
+                          },
+                          leading: const Icon(
+                            Icons.flag,
+                            size: 16,
+                            color: Color(0xFFF59E0B),
                           ),
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(
-                                Icons.edit_outlined,
-                                size: 15,
-                                color: Color(0xFF94A3B8),
-                              ),
-                              tooltip: '编辑标记',
-                              onPressed: () => _editMarkerDialog(marker),
+                          title: Text(
+                            marker.label,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
                             ),
-                            IconButton(
-                              icon: const Icon(
-                                Icons.delete_outline,
-                                size: 15,
-                                color: Color(0xFFF87171),
-                              ),
-                              tooltip: '删除标记',
-                              onPressed: () =>
-                                  _controller.deleteMarker(marker.id),
+                          ),
+                          subtitle: Text(
+                            '${marker.time.toStringAsFixed(2)}s (${_formatTimecode(marker.time)})',
+                            style: const TextStyle(
+                              color: Color(0xFFFBBF24),
+                              fontSize: 10,
+                              fontFamily: 'monospace',
                             ),
-                          ],
+                          ),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.edit_outlined,
+                                  size: 15,
+                                  color: Color(0xFF94A3B8),
+                                ),
+                                tooltip: '编辑标记',
+                                onPressed: () => _editMarkerDialog(marker),
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  size: 15,
+                                  color: Color(0xFFF87171),
+                                ),
+                                tooltip: '删除标记',
+                                onPressed: () =>
+                                    _controller.deleteMarker(marker.id),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     );
@@ -1453,19 +1469,23 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                   color: Color(0xFF38BDF8),
                 ),
                 const SizedBox(width: 6),
-                const Text(
-                  '节目监视器 (termui_flutter 预览)',
-                  style: TextStyle(
-                    color: Color(0xFFE2E8F0),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                const Expanded(
+                  child: Text(
+                    '节目监视器 (termui_flutter 预览)',
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Color(0xFFE2E8F0),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 8),
                 // Theme selector
                 DropdownButtonHideUnderline(
                   child: DropdownButton<TerminalPreviewTheme>(
                     value: _controller.previewTheme,
+                    isDense: true,
                     dropdownColor: const Color(0xFF1E2433),
                     style: const TextStyle(color: Colors.white, fontSize: 11),
                     items: TerminalPreviewTheme.values
