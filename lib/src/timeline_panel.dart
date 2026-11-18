@@ -52,7 +52,6 @@ class _AsciicastTimelinePanelState extends State<AsciicastTimelinePanel> {
       builder: (context, _) {
         final ctrl = widget.controller;
         final totalSeconds = math.max(ctrl.totalDuration + 3.0, 10.0);
-        final canvasWidth = math.max(600.0, totalSeconds * ctrl.timelineZoom);
         final clipSpans = ctrl.computeClipSpans();
         final inputEvents = ctrl.bakedEvents
             .where((e) => e.type == 'i')
@@ -123,79 +122,97 @@ class _AsciicastTimelinePanelState extends State<AsciicastTimelinePanel> {
               const VerticalDivider(width: 1, color: Color(0xFF262B38)),
               // Right Scrollable Multi-Track Timeline Area
               Expanded(
-                child: Scrollbar(
-                  controller: _horizontalScroll,
-                  thumbVisibility: true,
-                  child: SingleChildScrollView(
-                    controller: _horizontalScroll,
-                    scrollDirection: Axis.horizontal,
-                    child: SizedBox(
-                      width: canvasWidth,
-                      child: Stack(
-                        children: [
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final viewportWidth = constraints.maxWidth.isFinite
+                        ? constraints.maxWidth
+                        : 600.0;
+                    ctrl.updateTimelineViewportWidth(viewportWidth);
+                    final canvasWidth = math.max(
+                      viewportWidth,
+                      totalSeconds * ctrl.timelineZoom,
+                    );
+                    return Scrollbar(
+                      controller: _horizontalScroll,
+                      thumbVisibility: true,
+                      child: SingleChildScrollView(
+                        controller: _horizontalScroll,
+                        scrollDirection: Axis.horizontal,
+                        child: SizedBox(
+                          width: canvasWidth,
+                          child: Stack(
                             children: [
-                              // 1. Time Ruler
-                              GestureDetector(
-                                behavior: HitTestBehavior.opaque,
-                                onTapDown: (d) =>
-                                    _scrubAtLocalDx(d.localPosition.dx),
-                                onHorizontalDragUpdate: (d) =>
-                                    _scrubAtLocalDx(d.localPosition.dx),
-                                child: SizedBox(
-                                  height: _rulerHeight,
-                                  width: canvasWidth,
-                                  child: CustomPaint(
-                                    painter: _TimeRulerPainter(
-                                      zoom: ctrl.timelineZoom,
-                                      totalDuration: ctrl.totalDuration,
-                                      playheadTime: ctrl.playheadTime,
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  // 1. Time Ruler
+                                  GestureDetector(
+                                    behavior: HitTestBehavior.opaque,
+                                    onTapDown: (d) =>
+                                        _scrubAtLocalDx(d.localPosition.dx),
+                                    onHorizontalDragUpdate: (d) =>
+                                        _scrubAtLocalDx(d.localPosition.dx),
+                                    child: SizedBox(
+                                      height: _rulerHeight,
+                                      width: canvasWidth,
+                                      child: CustomPaint(
+                                        painter: _TimeRulerPainter(
+                                          zoom: ctrl.timelineZoom,
+                                          totalDuration: ctrl.totalDuration,
+                                          playheadTime: ctrl.playheadTime,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  // 2. M1 Marker Track
+                                  _buildMarkerTrack(ctrl, canvasWidth),
+                                  // 3. T1 Clip Track
+                                  _buildClipTrack(ctrl, clipSpans, canvasWidth),
+                                  // 4. I1 Input Track
+                                  _buildInputTrack(
+                                    ctrl,
+                                    inputEvents,
+                                    canvasWidth,
+                                  ),
+                                ],
+                              ),
+                              // Razor hover guide line
+                              if (ctrl.activeTool == NleToolMode.razor &&
+                                  _hoverRazorTime != null)
+                                Positioned(
+                                  left: _timeToX(_hoverRazorTime!),
+                                  top: _rulerHeight,
+                                  bottom: 0,
+                                  child: IgnorePointer(
+                                    child: Container(
+                                      width: 1.5,
+                                      color: const Color(0xFFF43F5E),
+                                    ),
+                                  ),
+                                ),
+                              // Red Playhead (CTI) Line spanning all tracks
+                              Positioned(
+                                left: (_timeToX(ctrl.playheadTime) - 6).clamp(
+                                  0.0,
+                                  math.max(0.0, canvasWidth - 12),
+                                ),
+                                top: 0,
+                                bottom: 0,
+                                child: IgnorePointer(
+                                  child: SizedBox(
+                                    width: 12,
+                                    child: CustomPaint(
+                                      painter: _PlayheadPainter(),
                                     ),
                                   ),
                                 ),
                               ),
-                              // 2. M1 Marker Track
-                              _buildMarkerTrack(ctrl, canvasWidth),
-                              // 3. T1 Clip Track
-                              _buildClipTrack(ctrl, clipSpans, canvasWidth),
-                              // 4. I1 Input Track
-                              _buildInputTrack(ctrl, inputEvents, canvasWidth),
                             ],
                           ),
-                          // Razor hover guide line
-                          if (ctrl.activeTool == NleToolMode.razor &&
-                              _hoverRazorTime != null)
-                            Positioned(
-                              left: _timeToX(_hoverRazorTime!),
-                              top: _rulerHeight,
-                              bottom: 0,
-                              child: IgnorePointer(
-                                child: Container(
-                                  width: 1.5,
-                                  color: const Color(0xFFF43F5E),
-                                ),
-                              ),
-                            ),
-                          // Red Playhead (CTI) Line spanning all tracks
-                          Positioned(
-                            left: (_timeToX(ctrl.playheadTime) - 6).clamp(
-                              0.0,
-                              canvasWidth - 12,
-                            ),
-                            top: 0,
-                            bottom: 0,
-                            child: IgnorePointer(
-                              child: SizedBox(
-                                width: 12,
-                                child: CustomPaint(painter: _PlayheadPainter()),
-                              ),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
               ),
             ],

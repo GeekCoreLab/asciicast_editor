@@ -70,6 +70,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
       );
       _ownsController = true;
     }
+    HardwareKeyboard.instance.addHandler(_handleHardwareKeyEvent);
   }
 
   @override
@@ -94,6 +95,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleHardwareKeyEvent);
     _shortcutFocusNode.dispose();
     if (_ownsController) {
       _controller.dispose();
@@ -101,71 +103,232 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
     super.dispose();
   }
 
-  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    // Do not intercept keys when a TextField has focus
+  bool _isTextInputFocused() {
     final primaryFocus = FocusManager.instance.primaryFocus;
-    if (primaryFocus != null &&
-        primaryFocus != _shortcutFocusNode &&
-        primaryFocus.context?.widget is EditableText) {
-      return KeyEventResult.ignored;
-    }
+    if (primaryFocus == null) return false;
+    final ctx = primaryFocus.context;
+    if (ctx == null) return false;
+    if (ctx.widget is EditableText) return true;
+    return ctx.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  bool _handleHardwareKeyEvent(KeyEvent event) {
+    if (!mounted) return false;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return false;
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return false;
+    if (!TickerMode.valuesOf(context).enabled) return false;
+    if (_isTextInputFocused()) return false;
 
     final kb = HardwareKeyboard.instance;
     final isCtrlOrMeta = kb.isControlPressed || kb.isMetaPressed;
+    final isShift = kb.isShiftPressed;
+    final isAlt = kb.isAltPressed;
+    final key = event.logicalKey;
 
-    if (isCtrlOrMeta && event.logicalKey == LogicalKeyboardKey.keyZ) {
-      if (kb.isShiftPressed) {
-        _controller.redo();
-      } else {
-        _controller.undo();
+    if (event is KeyRepeatEvent) {
+      // Swallow Space repeat so a focused button never receives ActivateIntent.
+      if (key == LogicalKeyboardKey.space && !isCtrlOrMeta && !isAlt) {
+        return true;
       }
-      return KeyEventResult.handled;
+      final isStepKey =
+          key == LogicalKeyboardKey.arrowLeft ||
+          key == LogicalKeyboardKey.arrowRight ||
+          key == LogicalKeyboardKey.comma ||
+          key == LogicalKeyboardKey.period;
+      final isZoomKey =
+          key == LogicalKeyboardKey.equal ||
+          key == LogicalKeyboardKey.add ||
+          key == LogicalKeyboardKey.numpadAdd ||
+          key == LogicalKeyboardKey.minus ||
+          key == LogicalKeyboardKey.numpadSubtract;
+      if (!isStepKey && !isZoomKey) {
+        return false;
+      }
     }
-    if (isCtrlOrMeta && event.logicalKey == LogicalKeyboardKey.keyK) {
-      _controller.splitAtPlayhead();
-      return KeyEventResult.handled;
-    }
-    if (isCtrlOrMeta) return KeyEventResult.ignored;
 
-    if (event.logicalKey == LogicalKeyboardKey.space) {
+    if (isAlt) return false;
+
+    // Ctrl / Cmd shortcuts (DaVinci Resolve template)
+    if (isCtrlOrMeta) {
+      if (key == LogicalKeyboardKey.keyZ) {
+        if (isShift) {
+          _controller.redo();
+        } else {
+          _controller.undo();
+        }
+        return true;
+      }
+      if (key == LogicalKeyboardKey.keyY) {
+        _controller.redo();
+        return true;
+      }
+      if (key == LogicalKeyboardKey.keyB ||
+          key == LogicalKeyboardKey.backslash ||
+          key == LogicalKeyboardKey.keyK) {
+        _controller.splitAtPlayhead();
+        return true;
+      }
+      if (key == LogicalKeyboardKey.keyL) {
+        _controller.setLooping(!_controller.isLooping);
+        return true;
+      }
+      if (key == LogicalKeyboardKey.keyR) {
+        final clipId = _controller.selectedClipId;
+        if (clipId != null) {
+          _promptSetClipSpeed(clipId);
+          return true;
+        }
+        return false;
+      }
+      if (key == LogicalKeyboardKey.equal ||
+          key == LogicalKeyboardKey.add ||
+          key == LogicalKeyboardKey.numpadAdd) {
+        _controller.setTimelineZoom(_controller.timelineZoom * 1.25);
+        return true;
+      }
+      if (key == LogicalKeyboardKey.minus ||
+          key == LogicalKeyboardKey.numpadSubtract) {
+        _controller.setTimelineZoom(_controller.timelineZoom / 1.25);
+        return true;
+      }
+      return false;
+    }
+
+    // Play / Pause (Space always toggles playback regardless of focused button)
+    if (key == LogicalKeyboardKey.space) {
       _controller.togglePlay();
-      return KeyEventResult.handled;
+      return true;
     }
-    if (event.logicalKey == LogicalKeyboardKey.keyV) {
+
+    // DaVinci Resolve J / K / L Shuttle
+    if (key == LogicalKeyboardKey.keyJ) {
+      _controller.shuttleBackward(stepSeconds: isShift ? 5.0 : 1.0);
+      return true;
+    }
+    if (key == LogicalKeyboardKey.keyK) {
+      _controller.pause();
+      return true;
+    }
+    if (key == LogicalKeyboardKey.keyL) {
+      _controller.shuttleForward();
+      return true;
+    }
+
+    // Tools: A (Selection) / V (alias), B (Blade/Razor) / C (alias)
+    if (key == LogicalKeyboardKey.keyA || key == LogicalKeyboardKey.keyV) {
       _controller.setActiveTool(NleToolMode.pointer);
-      return KeyEventResult.handled;
+      return true;
     }
-    if (event.logicalKey == LogicalKeyboardKey.keyC ||
-        event.logicalKey == LogicalKeyboardKey.keyB) {
+    if (key == LogicalKeyboardKey.keyB || key == LogicalKeyboardKey.keyC) {
       _controller.setActiveTool(NleToolMode.razor);
-      return KeyEventResult.handled;
+      return true;
     }
-    if (event.logicalKey == LogicalKeyboardKey.keyK) {
-      _controller.splitAtPlayhead();
-      return KeyEventResult.handled;
+
+    // Clip actions: D (Disable/Enable), Delete/Backspace (Ripple Delete)
+    if (key == LogicalKeyboardKey.keyD) {
+      final clipId = _controller.selectedClipId;
+      if (clipId != null) {
+        _controller.toggleClipMuted(clipId);
+        return true;
+      }
+      return false;
     }
-    if (event.logicalKey == LogicalKeyboardKey.keyM) {
+    if (key == LogicalKeyboardKey.delete ||
+        key == LogicalKeyboardKey.backspace) {
+      final clipId = _controller.selectedClipId;
+      if (clipId != null) {
+        _controller.deleteClip(clipId, ripple: true);
+        return true;
+      }
+      return false;
+    }
+
+    // Zoom to Fit (Shift + Z) & Quick Zoom (= / -)
+    if (key == LogicalKeyboardKey.keyZ && isShift) {
+      _controller.fitTimelineToViewport();
+      return true;
+    }
+    if (key == LogicalKeyboardKey.equal ||
+        key == LogicalKeyboardKey.add ||
+        key == LogicalKeyboardKey.numpadAdd) {
+      _controller.setTimelineZoom(_controller.timelineZoom * 1.25);
+      return true;
+    }
+    if (key == LogicalKeyboardKey.minus ||
+        key == LogicalKeyboardKey.numpadSubtract) {
+      _controller.setTimelineZoom(_controller.timelineZoom / 1.25);
+      return true;
+    }
+
+    // Marker
+    if (key == LogicalKeyboardKey.keyM) {
       _promptAddMarker();
-      return KeyEventResult.handled;
+      return true;
     }
-    if (event.logicalKey == LogicalKeyboardKey.comma) {
+
+    // Frame / 1s / Edit-point / Marker / Start-End Navigation
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      if (isShift) {
+        _controller.seek(_controller.playheadTime - 1.0);
+      } else {
+        _controller.stepBackwardFrame();
+      }
+      return true;
+    }
+    if (key == LogicalKeyboardKey.arrowRight) {
+      if (isShift) {
+        _controller.seek(_controller.playheadTime + 1.0);
+      } else {
+        _controller.stepForwardFrame();
+      }
+      return true;
+    }
+    if (key == LogicalKeyboardKey.comma) {
       _controller.stepBackwardFrame();
-      return KeyEventResult.handled;
+      return true;
     }
-    if (event.logicalKey == LogicalKeyboardKey.period) {
+    if (key == LogicalKeyboardKey.period) {
       _controller.stepForwardFrame();
-      return KeyEventResult.handled;
+      return true;
     }
-    if (event.logicalKey == LogicalKeyboardKey.bracketLeft) {
+    if (key == LogicalKeyboardKey.arrowUp) {
+      if (isShift) {
+        _controller.jumpToPrevMarker();
+      } else {
+        _controller.jumpToPrevEditPoint();
+      }
+      return true;
+    }
+    if (key == LogicalKeyboardKey.arrowDown) {
+      if (isShift) {
+        _controller.jumpToNextMarker();
+      } else {
+        _controller.jumpToNextEditPoint();
+      }
+      return true;
+    }
+    if (key == LogicalKeyboardKey.bracketLeft) {
       _controller.jumpToPrevMarker();
-      return KeyEventResult.handled;
+      return true;
     }
-    if (event.logicalKey == LogicalKeyboardKey.bracketRight) {
+    if (key == LogicalKeyboardKey.bracketRight) {
       _controller.jumpToNextMarker();
-      return KeyEventResult.handled;
+      return true;
     }
-    return KeyEventResult.ignored;
+    if (key == LogicalKeyboardKey.home) {
+      _controller.jumpToStart();
+      return true;
+    }
+    if (key == LogicalKeyboardKey.end) {
+      _controller.jumpToFinalResult();
+      return true;
+    }
+    if (key == LogicalKeyboardKey.slash && isShift) {
+      _showShortcutsDialog();
+      return true;
+    }
+    return false;
   }
 
   void _triggerExport() {
@@ -179,6 +342,130 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
       fileName: _fileName.endsWith('.cast') ? _fileName : '$_fileName.cast',
     );
     widget.onExport?.call(result);
+  }
+
+  Future<void> _promptSetClipSpeed(String clipId) async {
+    final idx = _controller.clips.indexWhere((c) => c.id == clipId);
+    if (idx < 0) return;
+    final clip = _controller.clips[idx];
+    final speedCtrl = TextEditingController(
+      text: clip.speed.toStringAsFixed(2).replaceAll(RegExp(r'\.?0+$'), ''),
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('变速控制 · ${clip.name} (Ctrl+R)'),
+        content: TextField(
+          controller: speedCtrl,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(
+            labelText: '片段倍速 (0.25 ~ 8.0)',
+            hintText: '例如：0.5 / 1.0 / 1.5 / 2.0 / 4.0',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (_) => Navigator.pop(ctx, true),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('应用倍速'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      final parsed = double.tryParse(speedCtrl.text.trim());
+      if (parsed != null && parsed > 0) {
+        _controller.setClipSpeed(clipId, parsed);
+      }
+    }
+    speedCtrl.dispose();
+  }
+
+  Future<void> _showShortcutsDialog() async {
+    const shortcuts = <(String, String)>[
+      ('Space', '播放 / 暂停 (全局生效)'),
+      ('J / K / L', '后退 1 秒 / 暂停 / 向前播放与倍速穿梭'),
+      ('← / → 或 , / .', '上一帧 / 下一帧'),
+      ('Shift + ← / →', '后退 / 前进 1 秒'),
+      ('Home / End', '回到开头 / 跳转到最终结果'),
+      ('↑ / ↓', '上一个 / 下一个片段边界'),
+      ('Shift + ↑ / ↓ 或 [ / ]', '上一个 / 下一个标记'),
+      ('A (或 V)', '选择工具 (Selection)'),
+      ('B (或 C)', '剃刀工具 (Blade / Razor)'),
+      ('Ctrl/Cmd + B (或 Ctrl+K)', '在播放头处切分片段'),
+      ('D', '启用 / 禁用当前选中片段'),
+      ('Delete / Backspace', '波纹删除当前选中片段'),
+      ('Ctrl/Cmd + R', '调整当前选中片段倍速'),
+      ('M', '在播放头处添加标记'),
+      ('Ctrl/Cmd + L', '切换循环播放'),
+      ('Ctrl/Cmd + Z / Ctrl+Shift+Z', '撤销 / 重做'),
+      ('= / - (或 Ctrl+= / Ctrl+-)', '放大 / 缩小时间轴'),
+      ('Shift + Z', '时间轴自适应铺满窗口'),
+      ('?', '打开此快捷键说明'),
+    ];
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('快捷键说明 · DaVinci Resolve 模板'),
+        content: SizedBox(
+          width: 460,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final item in shortcuts)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E293B),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: const Color(0xFF334155)),
+                          ),
+                          child: Text(
+                            item.$1,
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF38BDF8),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            item.$2,
+                            style: const TextStyle(fontSize: 12.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _promptAddMarker() async {
@@ -462,7 +749,6 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
     return Focus(
       focusNode: _shortcutFocusNode,
       autofocus: true,
-      onKeyEvent: _handleKeyEvent,
       child: ListenableBuilder(
         listenable: _controller,
         builder: (context, _) {
@@ -559,17 +845,17 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
               ),
             ),
             const SizedBox(width: 16),
-            // Tool Mode Selector (Pointer V / Razor C)
+            // Tool Mode Selector (DaVinci Resolve: Pointer A / Blade B)
             _buildToolChip(
               icon: Icons.near_me_outlined,
-              label: '选择 (V)',
+              label: '选择 (A)',
               selected: _controller.activeTool == NleToolMode.pointer,
               onTap: () => _controller.setActiveTool(NleToolMode.pointer),
             ),
             const SizedBox(width: 6),
             _buildToolChip(
               icon: Icons.content_cut,
-              label: '剃刀分割 (C)',
+              label: '剃刀分割 (B)',
               selected: _controller.activeTool == NleToolMode.razor,
               activeColor: const Color(0xFFF43F5E),
               onTap: () => _controller.setActiveTool(NleToolMode.razor),
@@ -577,7 +863,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
             const SizedBox(width: 6),
             _buildActionBtn(
               icon: Icons.vertical_split,
-              label: '播放头切分 (K)',
+              label: '播放头切分 (Ctrl+B)',
               onTap: () => _controller.splitAtPlayhead(),
             ),
             const SizedBox(width: 6),
@@ -648,7 +934,19 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
               ),
             ),
             const Icon(Icons.zoom_in, size: 15, color: Color(0xFF94A3B8)),
-            const SizedBox(width: 12),
+            IconButton(
+              icon: const Icon(Icons.fit_screen_outlined, size: 17),
+              color: const Color(0xFF94A3B8),
+              tooltip: '时间轴自适应窗口 (Shift+Z)',
+              onPressed: _controller.fitTimelineToViewport,
+            ),
+            IconButton(
+              icon: const Icon(Icons.keyboard_outlined, size: 18),
+              color: const Color(0xFF94A3B8),
+              tooltip: '快捷键列表 - 达芬奇模板 (?)',
+              onPressed: _showShortcutsDialog,
+            ),
+            const SizedBox(width: 8),
             if (widget.onExport != null)
               FilledButton.icon(
                 style: FilledButton.styleFrom(
@@ -1660,7 +1958,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                       size: 18,
                       color: Colors.white70,
                     ),
-                    tooltip: '回到开头',
+                    tooltip: '回到开头 (Home)',
                     onPressed: _controller.jumpToStart,
                   ),
                   IconButton(
@@ -1669,7 +1967,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                       size: 17,
                       color: Color(0xFFF59E0B),
                     ),
-                    tooltip: '上一个标记 ([)',
+                    tooltip: '上一个标记 (Shift+↑ / [)',
                     onPressed: _controller.markers.isEmpty
                         ? null
                         : _controller.jumpToPrevMarker,
@@ -1680,7 +1978,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                       size: 20,
                       color: Colors.white70,
                     ),
-                    tooltip: '上一帧 (,)',
+                    tooltip: '上一帧 (← / ,)',
                     onPressed: _controller.stepBackwardFrame,
                   ),
                   FilledButton.icon(
@@ -1704,7 +2002,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                       size: 20,
                       color: Colors.white70,
                     ),
-                    tooltip: '下一帧 (.)',
+                    tooltip: '下一帧 (→ / .)',
                     onPressed: _controller.stepForwardFrame,
                   ),
                   IconButton(
@@ -1713,7 +2011,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                       size: 17,
                       color: Color(0xFFF59E0B),
                     ),
-                    tooltip: '下一个标记 (])',
+                    tooltip: '下一个标记 (Shift+↓ / ])',
                     onPressed: _controller.markers.isEmpty
                         ? null
                         : _controller.jumpToNextMarker,
@@ -1724,7 +2022,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                       size: 18,
                       color: Colors.white70,
                     ),
-                    tooltip: '跳转到最终结果',
+                    tooltip: '跳转到最终结果 (End)',
                     onPressed: _controller.jumpToFinalResult,
                   ),
                 ],

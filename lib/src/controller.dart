@@ -87,6 +87,7 @@ class AsciicastEditorController extends ChangeNotifier {
   bool _pauseOnMarkers = true;
   double _playbackSpeed = 1.0;
   double _timelineZoom = 64.0; // pixels per second
+  double _timelineViewportWidth = 600.0;
   NleToolMode _activeTool = NleToolMode.pointer;
   TerminalPreviewTheme _previewTheme = TerminalPreviewTheme.termuiDark;
   double _fontSize = 13.0;
@@ -483,6 +484,72 @@ class AsciicastEditorController extends ChangeNotifier {
   void setTimelineZoom(double pixelsPerSecond) {
     _timelineZoom = pixelsPerSecond.clamp(16.0, 400.0);
     notifyListeners();
+  }
+
+  /// Updates the last measured timeline viewport width without triggering a rebuild.
+  void updateTimelineViewportWidth(double width) {
+    if (width.isFinite && width > 0) {
+      _timelineViewportWidth = width;
+    }
+  }
+
+  /// Fits the entire timeline duration into the current viewport width (DaVinci Shift+Z).
+  void fitTimelineToViewport() {
+    if (_timelineViewportWidth <= 0) return;
+    final targetDuration = math.max(_totalDuration + 1.0, 1.0);
+    setTimelineZoom(_timelineViewportWidth / targetDuration);
+  }
+
+  /// DaVinci Resolve `L` shuttle: starts playback or steps up forward speed.
+  void shuttleForward() {
+    if (!_isPlaying) {
+      play();
+      return;
+    }
+    const speeds = <double>[0.5, 1.0, 1.5, 2.0, 4.0];
+    final next = speeds.firstWhere(
+      (s) => s > _playbackSpeed + 0.05,
+      orElse: () => speeds.last,
+    );
+    setPlaybackSpeed(next);
+  }
+
+  /// DaVinci Resolve `J` shuttle: pauses and steps backward 1 second.
+  void shuttleBackward({double stepSeconds = 1.0}) {
+    pause();
+    seek(_playheadTime - stepSeconds);
+  }
+
+  /// Jumps playhead to the previous clip boundary / edit point (DaVinci Up Arrow).
+  void jumpToPrevEditPoint() {
+    final boundaries = <double>{0.0, _totalDuration};
+    for (final span in computeClipSpans()) {
+      boundaries.add(span.start);
+      boundaries.add(span.end);
+    }
+    final sorted = boundaries.toList()..sort();
+    for (var i = sorted.length - 1; i >= 0; i--) {
+      if (sorted[i] < _playheadTime - 0.05) {
+        seek(sorted[i]);
+        return;
+      }
+    }
+  }
+
+  /// Jumps playhead to the next clip boundary / edit point (DaVinci Down Arrow).
+  void jumpToNextEditPoint() {
+    final boundaries = <double>{0.0, _totalDuration};
+    for (final span in computeClipSpans()) {
+      boundaries.add(span.start);
+      boundaries.add(span.end);
+    }
+    final sorted = boundaries.toList()..sort();
+    for (final t in sorted) {
+      if (t > _playheadTime + 0.05) {
+        seek(t);
+        return;
+      }
+    }
   }
 
   void setPreviewTheme(TerminalPreviewTheme theme) {

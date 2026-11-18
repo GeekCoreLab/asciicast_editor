@@ -1,4 +1,6 @@
 import 'package:asciicast_editor/asciicast_editor.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -95,4 +97,173 @@ void main() {
     final bufferChars = controller.virtualTerminal.buffer.characters.join();
     expect(bufferChars, contains('done'));
   });
+
+  testWidgets(
+    'timeline fills full viewport width when recording duration is short',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      const shortCast = '''
+{"version": 2, "width": 80, "height": 24}
+[0.2, "o", "hi\\r\\n"]
+[0.8, "o", "bye\\r\\n"]
+''';
+      final controller = AsciicastEditorController(
+        initialCastContent: shortCast,
+      );
+      addTearDown(controller.dispose);
+      controller.setTimelineZoom(32.0); // 10s * 32px = 320px < viewport
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 1200,
+              height: 220,
+              child: AsciicastTimelinePanel(controller: controller),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final scrollViewBox = tester.getSize(find.byType(SingleChildScrollView));
+      // Right scrollable area = 1200 - 148 (headers) - 1 (divider) = 1051
+      expect(scrollViewBox.width, closeTo(1051.0, 1.0));
+
+      // The inner SizedBox inside SingleChildScrollView must match viewport width, not 600
+      final innerSizedBoxes = tester
+          .widgetList<SizedBox>(
+            find.descendant(
+              of: find.byType(SingleChildScrollView),
+              matching: find.byType(SizedBox),
+            ),
+          )
+          .where((box) => box.width != null)
+          .toList();
+      expect(innerSizedBoxes.first.width, closeTo(1051.0, 1.0));
+    },
+  );
+
+  testWidgets(
+    'Spacebar keeps toggling play/pause after clicking buttons and dialogs, and DaVinci shortcuts work',
+    (tester) async {
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final controller = AsciicastEditorController(
+        initialCastContent: sampleV2Cast,
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: AsciicastEditor(controller: controller)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Click the Play button so the FilledButton takes primary focus
+      await tester.tap(find.text('播放'));
+      await tester.pump();
+      expect(controller.isPlaying, isTrue);
+
+      // Spacebar must pause (not re-trigger or get swallowed by focused button)
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+      expect(controller.isPlaying, isFalse);
+
+      // Click another button (e.g. jump to start) to move focus to an IconButton
+      await tester.tap(find.byIcon(Icons.skip_previous));
+      await tester.pump();
+
+      // Spacebar must still play!
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+      expect(controller.isPlaying, isTrue);
+
+      // DaVinci K stops playback
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyK);
+      await tester.pump();
+      expect(controller.isPlaying, isFalse);
+
+      // DaVinci L starts playback and steps up speed
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.pump();
+      expect(controller.isPlaying, isTrue);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.pump();
+      expect(controller.playbackSpeed, greaterThan(1.0));
+
+      // DaVinci J pauses and steps backward
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyJ);
+      await tester.pump();
+      expect(controller.isPlaying, isFalse);
+
+      // DaVinci B selects Blade/Razor, A selects Pointer
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+      await tester.pump();
+      expect(controller.activeTool, NleToolMode.razor);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.pump();
+      expect(controller.activeTool, NleToolMode.pointer);
+
+      // DaVinci Ctrl+B splits at playhead
+      controller.seek(2.0);
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(controller.clips.length, 2);
+
+      // DaVinci D toggles mute on selected clip
+      final selectedId = controller.selectedClipId!;
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.pump();
+      expect(
+        controller.clips.firstWhere((c) => c.id == selectedId).muted,
+        isTrue,
+      );
+
+      // DaVinci Ctrl+L toggles looping
+      expect(controller.isLooping, isFalse);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyL);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(controller.isLooping, isTrue);
+
+      // DaVinci Shift+Z fits timeline to viewport
+      controller.setTimelineZoom(20.0);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+      expect(controller.timelineZoom, greaterThan(20.0));
+
+      // Open Marker dialog with M: Space inside dialog TextField must NOT toggle play
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyM);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+      expect(controller.isPlaying, isFalse);
+
+      // Close dialog and verify Spacebar works again immediately
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+      expect(controller.isPlaying, isTrue);
+
+      // Clean up playback timer before widget disposal
+      controller.pause();
+    },
+  );
 }
