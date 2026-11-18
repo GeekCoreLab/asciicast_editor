@@ -1,0 +1,23 @@
+name: asciicast_editor
+description: A pure Dart and Flutter library for parsing, trimming, and editing asciinema (.cast) recordings.
+version: 0.1.0
+homepage: https://github.com/GeekCoreLab/asciicast_editor
+repository: https://github.com/GeekCoreLab/asciicast_editor.git
+issue_tracker: https://github.com/GeekCoreLab/asciicast_editor/issues
+license: BSD-3-Clause
+
+environment:
+  sdk: ^3.10.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  termui: ^0.18.0
+  termui_flutter: ^0.13.1
+  termui_pty: ^0.13.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
