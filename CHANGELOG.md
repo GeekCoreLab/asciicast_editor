@@ -1,3 +1,9 @@
+## 0.1.1
+
+- Removed `termui_pty` dependency and replaced it with a built-in pure-Dart `VirtualTerminal` for full 6-platform and Web/WASM compatibility.
+- Migrated from deprecated `package:flutter/material.dart` to `package:material_ui/material_ui.dart` while preserving compatibility with legacy `flutter/material.dart` host apps.
+- Added an `example/` Flutter application demonstrating `AsciicastEditor`.
+
 ## 0.1.0
 
 - Initial release of `asciicast_editor`.
