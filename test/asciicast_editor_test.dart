@@ -479,4 +479,31 @@ void main() {
       );
     },
   );
+
+  test(
+    'pure-Dart VirtualTerminal handles ANSI colors, cursor, alt screen, and wide chars',
+    () {
+      const ansiCast = '''
+{"version": 2, "width": 20, "height": 5}
+[0.1, "o", "\\u001b[31;1mHi\\u001b[0m 中文"]
+[0.2, "o", "\\u001b[?1049hALT\\u001b[?1049l"]
+[0.3, "o", "\\r\\n\\u001b[38;2;10;20;30mRGB\\u001b[K"]
+''';
+      final controller = AsciicastEditorController(
+        initialCastContent: ansiCast,
+      );
+      addTearDown(controller.dispose);
+
+      controller.jumpToFinalResult();
+      final buf = controller.virtualTerminal.buffer;
+      expect(buf.getCharacter(0, 0), 'H');
+      expect(buf.getCharacter(1, 0), 'i');
+      expect(buf.getCharacter(3, 0), '中');
+      expect(buf.getCharacter(4, 0), '');
+      expect(buf.getCharacter(5, 0), '文');
+      expect(buf.getCharacter(0, 1), 'R');
+      expect(buf.getForeground(0, 1), 0xFF0A141E);
+      expect(controller.virtualTerminal.isUsingAlternateScreen, isFalse);
+    },
+  );
 }

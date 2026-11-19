@@ -10,12 +10,19 @@ environment:
   sdk: ^3.10.0
   flutter: ">=3.24.0"
 
+platforms:
+  android:
+  ios:
+  linux:
+  macos:
+  windows:
+  web:
+
 dependencies:
   flutter:
     sdk: flutter
   termui: ^0.18.0
   termui_flutter: ^0.13.1
-  termui_pty: ^0.13.1
 
 dev_dependencies:
   flutter_test:

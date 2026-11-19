@@ -3,11 +3,12 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:termui/termui.dart' as termui;
+import 'package:termui/ui/buffer.dart' as termui;
+import 'package:termui/ui/style.dart' as termui_style;
 import 'package:termui_flutter/termui_flutter.dart';
-import 'package:termui_pty/termui_pty.dart';
 
 import 'models.dart';
+import 'virtual_terminal.dart';
 
 class _HistorySnapshot {
   const _HistorySnapshot({
@@ -343,7 +344,7 @@ class AsciicastEditorController extends ChangeNotifier {
       char: ' ',
       fg: 0,
       bg: 0,
-      modifiers: termui.Modifier.none,
+      modifiers: termui_style.Modifier.none,
     );
     virtualTerminal.cursorX = 0;
     virtualTerminal.cursorY = 0;
