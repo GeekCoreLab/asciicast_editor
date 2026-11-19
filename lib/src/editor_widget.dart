@@ -349,6 +349,21 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
     widget.onExport?.call(result);
   }
 
+  Future<T?> _showLocalizedDialog<T>({required WidgetBuilder builder}) {
+    return showGeneralDialog<T>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Dismiss',
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 150),
+      pageBuilder: (ctx, _, _) => Localizations.override(
+        context: ctx,
+        delegates: const [_FallbackMaterialLocalizationsDelegate()],
+        child: Builder(builder: builder),
+      ),
+    );
+  }
+
   Future<void> _promptSetClipSpeed(String clipId) async {
     final idx = _controller.clips.indexWhere((c) => c.id == clipId);
     if (idx < 0) return;
@@ -356,8 +371,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
     final speedCtrl = TextEditingController(
       text: clip.speed.toStringAsFixed(2).replaceAll(RegExp(r'\.?0+$'), ''),
     );
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _showLocalizedDialog<bool>(
       builder: (ctx) => AlertDialog(
         title: Text('变速控制 · ${clip.name} (Ctrl+R)'),
         content: TextField(
@@ -415,8 +429,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
       ('Shift + Z', '时间轴自适应铺满窗口'),
       ('?', '打开此快捷键说明'),
     ];
-    await showDialog<void>(
-      context: context,
+    await _showLocalizedDialog<void>(
       builder: (ctx) => AlertDialog(
         title: const Text('快捷键说明 · DaVinci Resolve 模板'),
         content: SizedBox(
@@ -477,8 +490,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
   Future<void> _promptAddMarker() async {
     _controller.pause();
     final labelCtrl = TextEditingController(text: '关键命令');
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _showLocalizedDialog<bool>(
       builder: (ctx) => AlertDialog(
         title: Text('在 ${_formatTimecode(_controller.playheadTime)} 处插入标记'),
         content: TextField(
@@ -514,8 +526,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
     final limitCtrl = TextEditingController(
       text: (_controller.header.idleTimeLimit ?? 2.0).toStringAsFixed(1),
     );
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _showLocalizedDialog<bool>(
       builder: (ctx) => AlertDialog(
         title: const Text('压缩空闲等待时间 (Idle Time Limit)'),
         content: SizedBox(
@@ -567,8 +578,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
     final replaceCtrl = TextEditingController(text: '********');
     var useRegex = false;
 
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _showLocalizedDialog<bool>(
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           title: const Text('终端敏感内容打码 / 批量替换'),
@@ -645,8 +655,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
     );
     var version = _controller.header.version;
 
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _showLocalizedDialog<bool>(
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           title: const Text('画布尺寸与 Asciicast 头部设置'),
@@ -705,19 +714,29 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: DropdownButtonFormField<int>(
-                        initialValue: version == 3 ? 3 : 2,
+                      child: InputDecorator(
                         decoration: const InputDecoration(
                           labelText: '导出格式版本',
                           border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
                         ),
-                        items: const [
-                          DropdownMenuItem(value: 2, child: Text('v2 (.cast)')),
-                          DropdownMenuItem(value: 3, child: Text('v3 (.cast)')),
-                        ],
-                        onChanged: (v) {
-                          if (v != null) setDialogState(() => version = v);
-                        },
+                        child: _LocalizedDropdownButton<int>(
+                          value: version == 3 ? 3 : 2,
+                          isExpanded: true,
+                          dropdownColor: const Color(0xFF1E2433),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                          ),
+                          items: const [
+                            (value: 2, label: 'v2 (.cast)'),
+                            (value: 3, label: 'v3 (.cast)'),
+                          ],
+                          onChanged: (v) => setDialogState(() => version = v),
+                        ),
                       ),
                     ),
                   ],
@@ -756,8 +775,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
     var onlySelectedClip = false;
     final minGapCtrl = TextEditingController(text: '0.25');
 
-    final confirmed = await showDialog<bool>(
-      context: context,
+    final confirmed = await _showLocalizedDialog<bool>(
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           title: const Text('自动切片时间轴素材'),
@@ -879,7 +897,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
         builder: (context, _) {
           return Localizations.override(
             context: context,
-            delegates: const [DefaultMaterialLocalizations.delegate],
+            delegates: const [_FallbackMaterialLocalizationsDelegate()],
             child: Material(
               color: const Color(0xFF0D0F17),
               child: Column(
@@ -1690,8 +1708,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
     final timeCtrl = TextEditingController(
       text: marker.time.toStringAsFixed(2),
     );
-    final saved = await showDialog<bool>(
-      context: context,
+    final saved = await _showLocalizedDialog<bool>(
       builder: (ctx) => AlertDialog(
         title: const Text('编辑关键标记'),
         content: Column(
@@ -1953,8 +1970,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
   Future<void> _showClipEventsEditorDialog(String clipId) async {
     _controller.pause();
     var filterType = 'all';
-    await showDialog<void>(
-      context: context,
+    await _showLocalizedDialog<void>(
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) {
           final clipIdx = _controller.clips.indexWhere((c) => c.id == clipId);
@@ -2080,8 +2096,7 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
         : ev.type == 'o'
         ? '终端输出 (o)'
         : '事件帧 (${ev.type})';
-    final result = await showDialog<({String action, String text})>(
-      context: context,
+    final result = await _showLocalizedDialog<({String action, String text})>(
       builder: (ctx) => _RawEventEditDialog(
         title: '编辑$typeLabel (@ ${ev.timelineTime.toStringAsFixed(2)}s)',
         initialText: _escapeEventData(ev.data),
@@ -2110,90 +2125,105 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
             height: 38,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             color: const Color(0xFF161A24),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.tv_outlined,
-                  size: 15,
-                  color: Color(0xFF38BDF8),
-                ),
-                const SizedBox(width: 6),
-                const Expanded(
-                  child: Text(
-                    '节目监视器 (termui_flutter 预览)',
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Color(0xFFE2E8F0),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // Theme selector
-                DropdownButtonHideUnderline(
-                  child: DropdownButton<TerminalPreviewTheme>(
-                    value: _controller.previewTheme,
-                    isDense: true,
-                    dropdownColor: const Color(0xFF1E2433),
-                    style: const TextStyle(color: Colors.white, fontSize: 11),
-                    items: TerminalPreviewTheme.values
-                        .map(
-                          (t) => DropdownMenuItem(
-                            value: t,
-                            child: Text('主题: ${t.label}'),
+            child: LayoutBuilder(
+              builder: (context, constraints) => SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.tv_outlined,
+                            size: 15,
+                            color: Color(0xFF38BDF8),
                           ),
-                        )
-                        .toList(),
-                    onChanged: (val) {
-                      if (val != null) _controller.setPreviewTheme(val);
-                    },
+                          SizedBox(width: 6),
+                          Text(
+                            '节目监视器 (termui_flutter 预览)',
+                            style: TextStyle(
+                              color: Color(0xFFE2E8F0),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const SizedBox(width: 8),
+                          // Theme selector
+                          _LocalizedDropdownButton<TerminalPreviewTheme>(
+                            value: _controller.previewTheme,
+                            dropdownColor: const Color(0xFF1E2433),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                            ),
+                            items: [
+                              for (final t in TerminalPreviewTheme.values)
+                                (value: t, label: '主题: ${t.label}'),
+                            ],
+                            onChanged: _controller.setPreviewTheme,
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.text_decrease,
+                              size: 15,
+                              color: Color(0xFF94A3B8),
+                            ),
+                            tooltip: '缩小终端字号',
+                            onPressed: () => _controller.setFontSize(
+                              _controller.fontSize - 1,
+                            ),
+                          ),
+                          Text(
+                            '${_controller.fontSize.round()}pt',
+                            style: const TextStyle(
+                              color: Color(0xFF94A3B8),
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.text_increase,
+                              size: 15,
+                              color: Color(0xFF94A3B8),
+                            ),
+                            tooltip: '放大终端字号',
+                            onPressed: () => _controller.setFontSize(
+                              _controller.fontSize + 1,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          FilledButton.tonalIcon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF065F46),
+                              foregroundColor: const Color(0xFF6EE7B7),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            onPressed: _controller.jumpToFinalResult,
+                            icon: const Icon(Icons.fast_forward, size: 14),
+                            label: const Text(
+                              '查看最终结果',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                IconButton(
-                  icon: const Icon(
-                    Icons.text_decrease,
-                    size: 15,
-                    color: Color(0xFF94A3B8),
-                  ),
-                  tooltip: '缩小终端字号',
-                  onPressed: () =>
-                      _controller.setFontSize(_controller.fontSize - 1),
-                ),
-                Text(
-                  '${_controller.fontSize.round()}pt',
-                  style: const TextStyle(
-                    color: Color(0xFF94A3B8),
-                    fontSize: 11,
-                    fontFamily: 'monospace',
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(
-                    Icons.text_increase,
-                    size: 15,
-                    color: Color(0xFF94A3B8),
-                  ),
-                  tooltip: '放大终端字号',
-                  onPressed: () =>
-                      _controller.setFontSize(_controller.fontSize + 1),
-                ),
-                const SizedBox(width: 6),
-                FilledButton.tonalIcon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF065F46),
-                    foregroundColor: const Color(0xFF6EE7B7),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  onPressed: _controller.jumpToFinalResult,
-                  icon: const Icon(Icons.fast_forward, size: 14),
-                  label: const Text(
-                    '查看最终结果',
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
           // Pause on Marker Banner
@@ -2506,10 +2536,12 @@ class AsciicastEditorDialog extends StatelessWidget {
     String initialFileName = 'recording.cast',
     String exportButtonLabel = '保存并导出 .cast',
   }) {
-    return showDialog<AsciicastEditorResult>(
+    return showGeneralDialog<AsciicastEditorResult>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AsciicastEditorDialog(
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 150),
+      pageBuilder: (ctx, _, _) => AsciicastEditorDialog(
         initialCastContent: initialCastContent,
         initialFileName: initialFileName,
         exportButtonLabel: exportButtonLabel,
@@ -2520,61 +2552,260 @@ class AsciicastEditorDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final screen = MediaQuery.sizeOf(context);
-    return Dialog(
-      insetPadding: const EdgeInsets.all(16),
-      backgroundColor: const Color(0xFF0D0F17),
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: SizedBox(
-        width: (screen.width - 32).clamp(320.0, 1480.0),
-        height: (screen.height - 32).clamp(420.0, 920.0),
-        child: Column(
-          children: [
-            Container(
-              height: 40,
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              color: const Color(0xFF10131C),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.terminal,
-                    color: Color(0xFF38BDF8),
-                    size: 16,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Asciicast 非线性编辑器 (NLE) — $initialFileName',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(
-                      Icons.close,
+    return Localizations.override(
+      context: context,
+      delegates: const [_FallbackMaterialLocalizationsDelegate()],
+      child: Dialog(
+        insetPadding: const EdgeInsets.all(16),
+        backgroundColor: const Color(0xFF0D0F17),
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: SizedBox(
+          width: (screen.width - 32).clamp(320.0, 1480.0),
+          height: (screen.height - 32).clamp(420.0, 920.0),
+          child: Column(
+            children: [
+              Container(
+                height: 40,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                color: const Color(0xFF10131C),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.terminal,
+                      color: Color(0xFF38BDF8),
                       size: 16,
-                      color: Color(0xFF94A3B8),
                     ),
-                    label: const Text(
-                      '关闭',
-                      style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Asciicast 非线性编辑器 (NLE) — $initialFileName',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                  ),
-                ],
+                    TextButton.icon(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(
+                        Icons.close,
+                        size: 16,
+                        color: Color(0xFF94A3B8),
+                      ),
+                      label: const Text(
+                        '关闭',
+                        style: TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
+              const Divider(height: 1, color: Color(0xFF262B38)),
+              Expanded(
+                child: AsciicastEditor(
+                  initialCastContent: initialCastContent,
+                  initialFileName: initialFileName,
+                  exportButtonLabel: exportButtonLabel,
+                  onExport: (result) => Navigator.of(context).pop(result),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Provides [DefaultMaterialLocalizations] for any host locale so that
+/// `material_ui` widgets inside [AsciicastEditor] work when hosted inside a
+/// `package:flutter/material.dart` app with non-English locales.
+class _FallbackMaterialLocalizationsDelegate
+    extends LocalizationsDelegate<MaterialLocalizations> {
+  const _FallbackMaterialLocalizationsDelegate();
+
+  @override
+  bool isSupported(Locale locale) => true;
+
+  @override
+  Future<MaterialLocalizations> load(Locale locale) =>
+      DefaultMaterialLocalizations.load(locale);
+
+  @override
+  bool shouldReload(_FallbackMaterialLocalizationsDelegate old) => false;
+}
+
+class _LocalizedDropdownButton<T> extends StatelessWidget {
+  const _LocalizedDropdownButton({
+    required this.value,
+    required this.items,
+    required this.onChanged,
+    required this.dropdownColor,
+    required this.style,
+    this.isExpanded = false,
+  });
+
+  final T value;
+  final List<({T value, String label})> items;
+  final ValueChanged<T> onChanged;
+  final Color dropdownColor;
+  final TextStyle style;
+  final bool isExpanded;
+
+  Future<void> _openMenu(BuildContext context) async {
+    final renderBox = context.findRenderObject() as RenderBox?;
+    if (renderBox == null || !renderBox.hasSize) return;
+    final offset = renderBox.localToGlobal(Offset.zero);
+    final anchorRect = offset & renderBox.size;
+
+    final selected = await Navigator.of(context).push<T>(
+      _LocalizedMenuRoute<T>(
+        anchorRect: anchorRect,
+        items: items,
+        selectedValue: value,
+        dropdownColor: dropdownColor,
+        style: style,
+      ),
+    );
+    if (selected != null && selected != value) {
+      onChanged(selected);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentLabel = items
+        .firstWhere((item) => item.value == value, orElse: () => items.first)
+        .label;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(4),
+      onTap: () => _openMenu(context),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(
+          mainAxisSize: isExpanded ? MainAxisSize.max : MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            if (isExpanded)
+              Expanded(
+                child: Text(
+                  currentLabel,
+                  style: style,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              )
+            else
+              Text(currentLabel, style: style),
+            const SizedBox(width: 4),
+            Icon(
+              Icons.arrow_drop_down,
+              size: 16,
+              color: style.color ?? Colors.white,
             ),
-            const Divider(height: 1, color: Color(0xFF262B38)),
-            Expanded(
-              child: AsciicastEditor(
-                initialCastContent: initialCastContent,
-                initialFileName: initialFileName,
-                exportButtonLabel: exportButtonLabel,
-                onExport: (result) => Navigator.of(context).pop(result),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LocalizedMenuRoute<T> extends PopupRoute<T> {
+  _LocalizedMenuRoute({
+    required this.anchorRect,
+    required this.items,
+    required this.selectedValue,
+    required this.dropdownColor,
+    required this.style,
+  });
+
+  final Rect anchorRect;
+  final List<({T value, String label})> items;
+  final T selectedValue;
+  final Color dropdownColor;
+  final TextStyle style;
+
+  @override
+  Color? get barrierColor => Colors.transparent;
+
+  @override
+  bool get barrierDismissible => true;
+
+  @override
+  String? get barrierLabel => 'Dismiss';
+
+  @override
+  Duration get transitionDuration => const Duration(milliseconds: 120);
+
+  @override
+  Widget buildPage(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+  ) {
+    final mediaSize = MediaQuery.sizeOf(context);
+    final menuWidth = anchorRect.width.clamp(160.0, 280.0);
+    final left = anchorRect.left.clamp(
+      8.0,
+      (mediaSize.width - menuWidth - 8.0).clamp(8.0, double.infinity),
+    );
+    final top = anchorRect.bottom.clamp(
+      8.0,
+      (mediaSize.height - (items.length * 36.0 + 16.0)).clamp(
+        8.0,
+        double.infinity,
+      ),
+    );
+
+    return Localizations.override(
+      context: context,
+      delegates: const [_FallbackMaterialLocalizationsDelegate()],
+      child: FadeTransition(
+        opacity: animation,
+        child: Stack(
+          children: [
+            Positioned(
+              left: left,
+              top: top,
+              width: menuWidth,
+              child: Material(
+                color: dropdownColor,
+                elevation: 8,
+                borderRadius: BorderRadius.circular(6),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final item in items)
+                      InkWell(
+                        onTap: () => Navigator.of(context).pop(item.value),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 9,
+                          ),
+                          color: item.value == selectedValue
+                              ? Colors.white.withValues(alpha: 0.08)
+                              : Colors.transparent,
+                          child: Text(
+                            item.label,
+                            style: style.copyWith(
+                              fontWeight: item.value == selectedValue
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           ],

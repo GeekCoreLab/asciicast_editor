@@ -1,3 +1,9 @@
+## 0.1.2
+
+- Fixed `No MaterialLocalizations found` when hosting `AsciicastEditor` or `AsciicastEditorDialog` inside a `package:flutter/material.dart` app with non-English locales (e.g. `zh_CN`).
+- Replaced `DropdownButton` / `showDialog` calls inside `AsciicastEditor` with locale-safe `Localizations.override` routes so dropdown menus and dialogs work regardless of host locale.
+- Added horizontal scrolling fallback to the Program Monitor header bar to prevent `RenderFlex` overflow on narrow viewports.
+
 ## 0.1.1
 
 - Removed `termui_pty` dependency and replaced it with a built-in pure-Dart `VirtualTerminal` for full 6-platform and Web/WASM compatibility.
