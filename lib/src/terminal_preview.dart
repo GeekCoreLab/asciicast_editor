@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:termui/ui/terminal_palette.dart';
 import 'package:termui_flutter/termui_flutter.dart';
 

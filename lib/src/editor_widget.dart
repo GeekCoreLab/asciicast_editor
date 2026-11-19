@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import 'controller.dart';
@@ -877,61 +877,71 @@ class _AsciicastEditorState extends State<AsciicastEditor> {
       child: ListenableBuilder(
         listenable: _controller,
         builder: (context, _) {
-          return Container(
-            color: const Color(0xFF0D0F17),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // 1. Studio Top Action & Tool Bar
-                _buildTopToolbar(),
-                const Divider(height: 1, color: Color(0xFF262B38)),
-                // 2. Upper Split Area: Left Bin/Inspector + Right Program Monitor
-                Expanded(
-                  flex: 6,
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      final isCompact = constraints.maxWidth < 760;
-                      if (isCompact) {
-                        return Column(
+          return Localizations.override(
+            context: context,
+            delegates: const [DefaultMaterialLocalizations.delegate],
+            child: Material(
+              color: const Color(0xFF0D0F17),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // 1. Studio Top Action & Tool Bar
+                  _buildTopToolbar(),
+                  const Divider(height: 1, color: Color(0xFF262B38)),
+                  // 2. Upper Split Area: Left Bin/Inspector + Right Program Monitor
+                  Expanded(
+                    flex: 6,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final isCompact = constraints.maxWidth < 760;
+                        if (isCompact) {
+                          return Column(
+                            children: [
+                              Expanded(
+                                flex: 3,
+                                child: _buildProgramMonitorSection(),
+                              ),
+                              const Divider(
+                                height: 1,
+                                color: Color(0xFF262B38),
+                              ),
+                              Expanded(
+                                flex: 2,
+                                child: _buildLeftInspectorDock(),
+                              ),
+                            ],
+                          );
+                        }
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Expanded(
-                              flex: 3,
-                              child: _buildProgramMonitorSection(),
+                            SizedBox(
+                              width: 340,
+                              child: _buildLeftInspectorDock(),
                             ),
-                            const Divider(height: 1, color: Color(0xFF262B38)),
-                            Expanded(flex: 2, child: _buildLeftInspectorDock()),
+                            const VerticalDivider(
+                              width: 1,
+                              color: Color(0xFF262B38),
+                            ),
+                            Expanded(child: _buildProgramMonitorSection()),
                           ],
                         );
-                      }
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          SizedBox(
-                            width: 340,
-                            child: _buildLeftInspectorDock(),
-                          ),
-                          const VerticalDivider(
-                            width: 1,
-                            color: Color(0xFF262B38),
-                          ),
-                          Expanded(child: _buildProgramMonitorSection()),
-                        ],
-                      );
-                    },
+                      },
+                    ),
                   ),
-                ),
-                const Divider(height: 1, color: Color(0xFF262B38)),
-                // 3. Lower Multi-Track Timeline Panel
-                SizedBox(
-                  height: 185,
-                  child: AsciicastTimelinePanel(
-                    controller: _controller,
-                    onEditMarker: _editMarkerDialog,
-                    onEditEvent: _editRawEventDialog,
-                    onEditClipEvents: _showClipEventsEditorDialog,
+                  const Divider(height: 1, color: Color(0xFF262B38)),
+                  // 3. Lower Multi-Track Timeline Panel
+                  SizedBox(
+                    height: 185,
+                    child: AsciicastTimelinePanel(
+                      controller: _controller,
+                      onEditMarker: _editMarkerDialog,
+                      onEditEvent: _editRawEventDialog,
+                      onEditClipEvents: _showClipEventsEditorDialog,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },

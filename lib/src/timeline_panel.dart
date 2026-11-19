@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'controller.dart';
 import 'models.dart';
@@ -83,7 +83,7 @@ class _AsciicastTimelinePanelState extends State<AsciicastTimelinePanel> {
             .where((e) => e.type == 'i')
             .toList(growable: false);
 
-        return Container(
+        return Material(
           color: const Color(0xFF12151E),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,

@@ -21,6 +21,7 @@ platforms:
 dependencies:
   flutter:
     sdk: flutter
+  material_ui: ^1.11.1
   termui: ^0.18.0
   termui_flutter: ^0.13.1
 
